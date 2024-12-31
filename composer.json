@@ -1,6 +1,6 @@
 {
     "name": "laratel/opentelemetry",
-    "description": "A Laravel package for OpenTelemetry tracing, metrics and logging integration.",
+    "description": "A Laravel package for OpenTelemetry tracing, metrics, and logging integration.",
     "type": "library",
     "license": "MIT",
     "require": {
@@ -10,9 +10,17 @@
         "open-telemetry/transport-grpc": "^1.1",
         "illuminate/support": "^8.0|^9.0|^10.0"
     },
+    "require-dev": {
+        "phpunit/phpunit": "^9.5 || ^10.0"
+    },
     "autoload": {
         "psr-4": {
             "Laratel\\OpenTelemetry\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Laratel\\OpenTelemetry\\Tests\\": "tests/"
         }
     },
     "extra": {
@@ -22,15 +30,15 @@
             ]
         }
     },
-    "autoload-dev": {
-        "psr-4": {
-            "Laratel\\OpenTelemetry\\Tests\\": "tests/"
-        }
-    },
-    "require-dev": {
-        "phpunit/phpunit": "^9.5 || ^10.0"
-    },
     "scripts": {
         "test": "phpunit"
-    }
+    },
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/i-sazzad/laratel-opentelemetry"
+        }
+    ],
+    "minimum-stability": "stable",
+    "prefer-stable": true
 }
