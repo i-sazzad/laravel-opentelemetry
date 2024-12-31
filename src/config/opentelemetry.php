@@ -3,6 +3,7 @@
 return [
     // Endpoint configuration for OpenTelemetry
     'endpoint' => env('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4317'),
+    'protocol' => env('OTEL_EXPORTER_OTLP_PROTOCOL', 'grpc'),
 
     // Additional configuration for tracing
     'traces_exporter' => env('OTEL_TRACES_EXPORTER', 'otlp'),
@@ -31,6 +32,7 @@ return [
     // Dynamic queries exclusion for tracing and metrics
     'excluded_queries' => ['select * from `contact_setting` limit 1', 'update `logs`'],
 
+    // System paths for metrics
     'cpu_path' => '/proc/stat',
     'memory_path' => '/proc/meminfo',
     'disk_path' => '/',
