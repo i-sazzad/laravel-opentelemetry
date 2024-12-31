@@ -3,6 +3,7 @@
 namespace Laratel\Opentelemetry\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
 use OpenTelemetry\SDK\Common\Instrumentation\InstrumentationScopeFactory;
 use OpenTelemetry\SDK\Metrics\MeterProvider;
 use OpenTelemetry\SDK\Metrics\MetricReader\ExportingReader;
@@ -33,14 +34,28 @@ class OpenTelemetryServiceProvider extends ServiceProvider
     private function registerTracer(): void
     {
         $this->app->singleton('tracer', function () {
-            $endpoint = config('opentelemetry.endpoint') . '/opentelemetry.proto.collector.trace.v1.TraceService/Export';
+            $endpoint = config('opentelemetry.endpoint');
+            $protocol = config('opentelemetry.protocol');
 
             if (!filter_var($endpoint, FILTER_VALIDATE_URL)) {
                 throw new \InvalidArgumentException('Invalid OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
             }
 
-            $transport = (new GrpcTransportFactory())->create($endpoint, 'application/x-protobuf');
-            $spanExporter = new SpanExporter($transport);
+            $spanExporter = match ($protocol) {
+                'grpc' => new SpanExporter(
+                    (new GrpcTransportFactory())->create(
+                        $endpoint . '/opentelemetry.proto.collector.trace.v1.TraceService/Export',
+                        'application/x-protobuf'
+                    )
+                ),
+                'http' => new SpanExporter(
+                    (new OtlpHttpTransportFactory())->create(
+                        $endpoint . '/v1/traces',
+                        'application/json'
+                    )
+                ),
+                default => throw new \InvalidArgumentException("Unsupported protocol: $protocol"),
+            };
 
             return (new TracerProvider(
                 new SimpleSpanProcessor($spanExporter),
@@ -53,14 +68,29 @@ class OpenTelemetryServiceProvider extends ServiceProvider
     private function registerMetrics(): void
     {
         $this->app->singleton('meterProvider', function () {
-            $endpoint = config('opentelemetry.endpoint') . '/opentelemetry.proto.collector.metrics.v1.MetricsService/Export';
+            $endpoint = config('opentelemetry.endpoint');
+            $protocol = config('opentelemetry.protocol');
 
             if (!filter_var($endpoint, FILTER_VALIDATE_URL)) {
                 throw new \InvalidArgumentException('Invalid OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
             }
 
-            $transport = (new GrpcTransportFactory())->create($endpoint, 'application/x-protobuf');
-            $metricExporter = new MetricExporter($transport);
+            $metricExporter = match ($protocol) {
+                'grpc' => new MetricExporter(
+                    (new GrpcTransportFactory())->create(
+                        $endpoint . '/opentelemetry.proto.collector.metrics.v1.MetricsService/Export',
+                        'application/x-protobuf'
+                    )
+                ),
+                'http' => new MetricExporter(
+                    (new OtlpHttpTransportFactory())->create(
+                        $endpoint . '/v1/metrics',
+                        'application/json'
+                    )
+                ),
+                default => throw new \InvalidArgumentException("Unsupported protocol: $protocol"),
+            };
+
             $attributesFactory = new AttributesFactory();
 
             return new MeterProvider(
