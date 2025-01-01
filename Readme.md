@@ -1,6 +1,6 @@
-# Laravel OpenTelemetry Package
+# OpenTelemetry Laravel Package
 
-**Laravel OpenTelemetry** is a Laravel package that integrates OpenTelemetry for automatic HTTP request tracing, query tracing, metrics collection, and enhanced logging with contextual trace information.
+**OpenTelemetry Laravel** is a Laravel package that integrates OpenTelemetry for automatic HTTP request tracing, query tracing, metrics collection, and enhanced logging with contextual trace information.
 
 ---
 
@@ -18,7 +18,7 @@
 ## Requirements
 
 - PHP >= 8.0
-- Laravel >= 8.x
+- Laravel >= 9.x
 - Dependencies:
     - `open-telemetry/exporter-otlp` ^1.1
     - `open-telemetry/sdk` ^1.1
