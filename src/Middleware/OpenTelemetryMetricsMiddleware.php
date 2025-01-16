@@ -29,6 +29,14 @@ class OpenTelemetryMetricsMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
+        // Skip if metrics are already recorded for this request
+        if ($request->attributes->get('metrics_recorded', false)) {
+            return $next($request);
+        }
+
+        // Mark metrics as recorded for this request
+        $request->attributes->set('metrics_recorded', true);
+
         $this->startTime = microtime(true);
 
         // Skip recording metrics if the route is excluded
@@ -60,4 +68,5 @@ class OpenTelemetryMetricsMiddleware
             $this->helper->flushMetrics();
         }
     }
+
 }
