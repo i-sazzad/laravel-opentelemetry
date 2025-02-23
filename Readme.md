@@ -85,7 +85,7 @@ Add the following configuration to `config/logging.php` for enhanced OpenTelemet
 ```php
 'otel' => [
     'driver' => 'custom',
-    'via' => Laratel\Opentelemetry\Logging\OtelLoggerFactory::class,
+    'via' => Laratel\Opentelemetry\Logger\OtelLoggerFactory::class,
     'level' => 'debug',
 ],
 ```
