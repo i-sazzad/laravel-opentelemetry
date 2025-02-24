@@ -15,18 +15,18 @@
     },
     "autoload": {
         "psr-4": {
-            "Laratel\\OpenTelemetry\\": "src/"
+            "Laratel\\Opentelemetry\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Laratel\\OpenTelemetry\\Tests\\": "tests/"
+            "Laratel\\Opentelemetry\\Tests\\": "tests/"
         }
     },
     "extra": {
         "laravel": {
             "providers": [
-                "Laratel\\OpenTelemetry\\Providers\\OpenTelemetryServiceProvider"
+                "Laratel\\Opentelemetry\\Providers\\OpenTelemetryServiceProvider"
             ]
         }
     },
