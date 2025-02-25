@@ -1,7 +1,7 @@
 # OpenTelemetry Laravel Package
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/laratel/opentelemetry.svg?style=flat-square)](https://packagist.org/packages/laratel/opentelemetry)
-[![Total Downloads](https://img.shields.io/packagist/dt/laratel/opentelemetry.svg?style=flat-square)](https://packagist.org/packages/laratel/opentelemetry)
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/laratel/opentelemetry.svg?style=flat&color=blue)](https://packagist.org/packages/laratel/opentelemetry)
+[![Total Downloads](https://img.shields.io/packagist/dt/laratel/opentelemetry.svg?style=flat&color=green)](https://packagist.org/packages/laratel/opentelemetry)
 
 **OpenTelemetry Laravel** is a Laravel package that integrates OpenTelemetry for automatic HTTP request tracing, query tracing, metrics collection, and enhanced logging with contextual trace information.
 
