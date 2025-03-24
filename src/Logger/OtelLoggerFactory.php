@@ -3,6 +3,8 @@
 namespace Laratel\Opentelemetry\Logger;
 
 use Exception;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
 use OpenTelemetry\SDK\Common\Attribute\AttributesFactory;
 use OpenTelemetry\SDK\Common\Instrumentation\InstrumentationScopeFactory;
 use OpenTelemetry\SDK\Logs\LoggerProvider;
@@ -24,9 +26,9 @@ class OtelLoggerFactory
         $endpoint = config('opentelemetry.endpoint');
         $protocol = config('opentelemetry.protocol');
 
-        if (!filter_var($endpoint, FILTER_VALIDATE_URL)) {
-            Log::error('Invalid OTEL_EXPORTER_OTLP_ENDPOINT URL provided: ' . $endpoint);
-            throw new \InvalidArgumentException('Invalid OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
+        if (!filter_var($endpoint, FILTER_VALIDATE_URL) || !$this->isOpenTelemetryServerReachable()) {
+            Log::error('Invalid or unreachable OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
+            throw new \InvalidArgumentException('Invalid or unreachable OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
         }
 
         try {
@@ -73,6 +75,22 @@ class OtelLoggerFactory
         } catch (Exception $e) {
             Log::error('Failed to create OpenTelemetry logger: ' . $e->getMessage());
             throw $e;  // Re-throw exception to let the application handle it
+        }
+    }
+
+    private function isOpenTelemetryServerReachable(): bool
+    {
+        $client = new Client();
+        try {
+            // Attempt to send a simple request (e.g., a GET request) to the OpenTelemetry endpoint
+            $response = $client->get(config('opentelemetry.endpoint') . '/health', [
+                'timeout' => 1 // Set a short timeout for the request
+            ]);
+            return $response->getStatusCode() === 200;
+        } catch (GuzzleException $e) {
+            // Log the error but do not interrupt the request flow
+            Log::warning('Failed to connect to OpenTelemetry server: ' . $e->getMessage());
+            return false;  // Return false to skip tracing
         }
     }
 }

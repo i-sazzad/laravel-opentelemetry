@@ -30,6 +30,16 @@ class OpenTelemetryMetricsMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
+        if (!$this->metrics->metrics) {
+            // Skip recording if metrics are not available
+            return $next($request);
+        }
+
+        // Skip recording metrics if the route is excluded
+        if ($this->helper->shouldExclude($request->path())) {
+            return $next($request);
+        }
+
         // Skip if metrics are already recorded for this request
         if ($request->attributes->get('metrics_recorded', false)) {
             return $next($request);
@@ -40,11 +50,6 @@ class OpenTelemetryMetricsMiddleware
 
         // Start the timer to record the duration of the request processing
         $this->startTime = microtime(true);
-
-        // Skip recording metrics if the route is excluded
-        if ($this->helper->shouldExclude($request->path())) {
-            return $next($request);
-        }
 
         try {
             // Start recording database and cache metrics

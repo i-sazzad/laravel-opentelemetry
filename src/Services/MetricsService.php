@@ -13,11 +13,17 @@ use Throwable;
 class MetricsService
 {
     protected mixed $meter;
-    protected mixed $metrics;
+    public mixed $metrics;
 
     public function __construct()
     {
         $this->meter = app('metrics');
+        $this->metrics = [];
+
+        if(!$this->meter){
+            return null;  // Return null if metrics is not available
+        }
+
         $this->initializeMetrics();
     }
 
