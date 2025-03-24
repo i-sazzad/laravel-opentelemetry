@@ -2,6 +2,8 @@
 
 namespace Laratel\Opentelemetry\Providers;
 
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Log;
 use OpenTelemetry\SDK\Common\Instrumentation\InstrumentationScopeFactory;
@@ -38,8 +40,8 @@ class OpenTelemetryServiceProvider extends ServiceProvider
             $endpoint = config('opentelemetry.endpoint');
             $protocol = config('opentelemetry.protocol');
 
-            if (!filter_var($endpoint, FILTER_VALIDATE_URL)) {
-                Log::error('Invalid OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
+            if (!filter_var($endpoint, FILTER_VALIDATE_URL) || !$this->isOpenTelemetryServerReachable()) {
+                Log::error('Invalid or unreachable OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
                 return null;  // Return null if endpoint is invalid
             }
 
@@ -81,8 +83,8 @@ class OpenTelemetryServiceProvider extends ServiceProvider
             $endpoint = config('opentelemetry.endpoint');
             $protocol = config('opentelemetry.protocol');
 
-            if (!filter_var($endpoint, FILTER_VALIDATE_URL)) {
-                Log::error('Invalid OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
+            if (!filter_var($endpoint, FILTER_VALIDATE_URL) || !$this->isOpenTelemetryServerReachable()) {
+                Log::error('Invalid or unreachable OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
                 return null;  // Return null if endpoint is invalid
             }
 
@@ -131,6 +133,22 @@ class OpenTelemetryServiceProvider extends ServiceProvider
             $meterProvider = $this->app->make('meterProvider');
             return $meterProvider ? $meterProvider->getMeter('otel_metrics') : null;  // Ensure meterProvider is available
         });
+    }
+
+    private function isOpenTelemetryServerReachable(): bool
+    {
+        $client = new Client();
+        try {
+            // Attempt to send a simple request (e.g., a GET request) to the OpenTelemetry endpoint
+            $response = $client->get(config('opentelemetry.endpoint') . '/health', [
+                'timeout' => 1 // Set a short timeout for the request
+            ]);
+            return $response->getStatusCode() === 200;
+        } catch (GuzzleException $e) {
+            // Log the error but do not interrupt the request flow
+            Log::warning('Failed to connect to OpenTelemetry server: ' . $e->getMessage());
+            return false;  // Return false to skip tracing
+        }
     }
 
     public function boot(): void

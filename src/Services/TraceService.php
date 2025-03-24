@@ -13,12 +13,7 @@ class TraceService
 
     public function getTracer(): ?object
     {
-        $tracer = app('tracer');
-        if (!$tracer) {
-            Log::error('OpenTelemetry Tracer not available.');
-            return null;  // Return null if tracer is not available
-        }
-        return $tracer;
+        return app('tracer');
     }
 
     public function dbQueryTrace(): void

@@ -25,14 +25,14 @@ class OpenTelemetryTraceMiddleware
      */
     public function handle(Request $request, Closure $next)
     {
-        // Skip tracing for excluded paths
-        if ($this->helper->shouldExclude($request->path())) {
-            return $next($request);
-        }
-
         $tracer = $this->trace->getTracer();
         if (!$tracer) {
             // Skip tracing if tracer is not available
+            return $next($request);
+        }
+
+        // Skip tracing for excluded paths
+        if ($this->helper->shouldExclude($request->path())) {
             return $next($request);
         }
 
