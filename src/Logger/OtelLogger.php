@@ -4,6 +4,7 @@ namespace Laratel\Opentelemetry\Logger;
 
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
+use Illuminate\Support\Facades\Log;
 use OpenTelemetry\SDK\Logs\LoggerProvider;
 use OpenTelemetry\API\Logs\LogRecord;
 use OpenTelemetry\Context\Context;
@@ -20,14 +21,20 @@ class OtelLogger implements LoggerInterface
     public function log($level, $message, array $context = []): void
     {
         $logRecord = (new LogRecord($message))
-            ->setTimestamp((int) (microtime(true) * 1_000_000_000))
-            ->setObservedTimestamp((int) (microtime(true) * 1_000_000_000))
-            ->setSeverityNumber($this->mapSeverityNumber($level))
-            ->setSeverityText(strtoupper($level))
-            ->setAttributes($context)
-            ->setContext(Context::getCurrent());
+            ->setTimestamp((int) (microtime(true) * 1_000_000_000))  // Timestamp of log creation
+            ->setObservedTimestamp((int) (microtime(true) * 1_000_000_000)) // Timestamp of log observation
+            ->setSeverityNumber($this->mapSeverityNumber($level))  // Map severity to OpenTelemetry number
+            ->setSeverityText(strtoupper($level))  // Use log level as severity text
+            ->setAttributes($context)  // Attach the context as log attributes
+            ->setContext(Context::getCurrent()); // Attach the current context
 
-        $this->loggerProvider->getLogger('otel_logger')->emit($logRecord);
+        try {
+            // Emit the log record
+            $this->loggerProvider->getLogger('otel_logger')->emit($logRecord);
+        } catch (\Exception $e) {
+            // In case OpenTelemetry logging fails, fall back to Laravel's built-in logging system
+            Log::error('OpenTelemetry log failed: ' . $e->getMessage(), ['level' => $level, 'message' => $message, 'context' => $context]);
+        }
     }
 
     public function emergency($message, array $context = []): void
