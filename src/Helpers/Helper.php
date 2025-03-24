@@ -22,11 +22,7 @@ class Helper
 
     public function flushMetrics(): void
     {
-        try {
-            $meterProvider = app('meterProvider');
-            $meterProvider->forceFlush();
-        } catch (Throwable $e) {
-            Log::error('Failed to flush metrics to OpenTelemetry Collector', ['exception' => $e->getMessage()]);
-        }
+        $meterProvider = app('meterProvider');
+        $meterProvider->forceFlush();
     }
 }

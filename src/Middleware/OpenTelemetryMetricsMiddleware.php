@@ -7,6 +7,7 @@ use Laratel\Opentelemetry\Services\MetricsService;
 use Laratel\Opentelemetry\Helpers\Helper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
@@ -37,6 +38,7 @@ class OpenTelemetryMetricsMiddleware
         // Mark metrics as recorded for this request
         $request->attributes->set('metrics_recorded', true);
 
+        // Start the timer to record the duration of the request processing
         $this->startTime = microtime(true);
 
         // Skip recording metrics if the route is excluded
@@ -47,26 +49,44 @@ class OpenTelemetryMetricsMiddleware
         try {
             // Start recording database and cache metrics
             DB::listen(function ($query) {
-                $this->metrics->recordDbMetrics($query);
+                $this->metrics->recordDbMetrics($query); // Record database query metrics
             });
-            $this->metrics->wrapCacheOperations();
+
+            $this->metrics->wrapCacheOperations(); // Record cache operations
 
             // Process the request and capture the response
             $response = $next($request);
 
             // Record HTTP and system metrics
             $this->metrics->recordMetrics($request, $response, $this->startTime);
-            $this->metrics->recordSystemMetrics();
-            $this->metrics->recordNetworkMetrics();
+            $this->metrics->recordSystemMetrics(); // Record system-level metrics
+            $this->metrics->recordNetworkMetrics(); // Record network-level metrics
 
             return $response;
         } catch (Throwable $e) {
+            // Record error metrics if something goes wrong
             $this->metrics->recordErrorMetrics($e);
-            throw $e;
+
+            // Log the error, continue processing the request without affecting the flow
+            Log::error('OpenTelemetry Metrics Recording Error: ' . $e->getMessage(), [
+                'exception' => $e->getMessage(),
+                'stack' => $e->getTraceAsString(),
+                'request' => $request->all()
+            ]);
+
+            return $next($request); // Continue processing without failing the request
         } finally {
-            // Flush metrics data to the collector
-            $this->helper->flushMetrics();
+            // Flush metrics data to the collector, only if metrics were successfully captured
+            try {
+                $this->helper->flushMetrics();
+            } catch (Throwable $flushError) {
+                // Log the flush error but don't interrupt the request flow
+                Log::error('OpenTelemetry Metrics Flush Error: ' . $flushError->getMessage(), [
+                    'exception' => $flushError->getMessage(),
+                    'stack' => $flushError->getTraceAsString(),
+                    'request' => $request->all()
+                ]);
+            }
         }
     }
-
 }

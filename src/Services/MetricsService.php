@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use OpenTelemetry\SDK\Metrics\Counter;
 use OpenTelemetry\SDK\Metrics\Histogram;
+use Throwable;
 
 class MetricsService
 {
@@ -57,59 +58,75 @@ class MetricsService
 
     public function recordMetrics(Request $request, Response $response, $startTime): void
     {
-        $latency = microtime(true) - $startTime;
-        $this->metrics['requestCount']->add(1, ['method' => $request->method(), 'route' => $request->path()]);
-        $this->metrics['statusCodeCount']->add(1, ['status_code' => $response->getStatusCode(), 'method' => $request->method()]);
-        $this->metrics['requestLatency']->record($latency, ['method' => $request->method(), 'route' => $request->path()]);
-        $this->metrics['requestSize']->record(strlen($request->getContent()), ['method' => $request->method()]);
-        $this->metrics['responseSize']->record(strlen($response->getContent()), ['method' => $request->method()]);
+        try {
+            $latency = microtime(true) - $startTime;
+            $this->metrics['requestCount']->add(1, ['method' => $request->method(), 'route' => $request->path()]);
+            $this->metrics['statusCodeCount']->add(1, ['status_code' => $response->getStatusCode(), 'method' => $request->method()]);
+            $this->metrics['requestLatency']->record($latency, ['method' => $request->method(), 'route' => $request->path()]);
+            $this->metrics['requestSize']->record(strlen($request->getContent()), ['method' => $request->method()]);
+            $this->metrics['responseSize']->record(strlen($response->getContent()), ['method' => $request->method()]);
+        } catch (Throwable $e) {
+            Log::error('Error recording HTTP metrics: ' . $e->getMessage(), ['exception' => $e->getMessage(), 'stack' => $e->getTraceAsString()]);
+        }
     }
 
     public function recordSystemMetrics(): void
     {
-        $cpuStats = $this->getCpuStats();
-        foreach ($cpuStats as $state => $time) {
-            $this->metrics['cpuTime']->add($time, ['state' => $state, 'host' => gethostname()]);
-        }
+        try {
+            $cpuStats = $this->getCpuStats();
+            foreach ($cpuStats as $state => $time) {
+                $this->metrics['cpuTime']->add($time, ['state' => $state, 'host' => gethostname()]);
+            }
 
-        $memoryInfo = $this->getMemoryInfo();
-        foreach ($memoryInfo as $state => $value) {
-            $this->metrics['memoryUsage']->record($value, ['state' => $state, 'host' => gethostname()]);
-        }
+            $memoryInfo = $this->getMemoryInfo();
+            foreach ($memoryInfo as $state => $value) {
+                $this->metrics['memoryUsage']->record($value, ['state' => $state, 'host' => gethostname()]);
+            }
 
-        $diskUsage = disk_free_space(config('opentelemetry.disk_path', '/'));
-        $this->metrics['diskUsage']->record($diskUsage, ['host' => gethostname()]);
+            $diskUsage = disk_free_space(config('opentelemetry.disk_path', '/'));
+            $this->metrics['diskUsage']->record($diskUsage, ['host' => gethostname()]);
+        } catch (Throwable $e) {
+            Log::error('Error recording system metrics: ' . $e->getMessage(), ['exception' => $e->getMessage(), 'stack' => $e->getTraceAsString()]);
+        }
     }
 
     public function recordNetworkMetrics(): void
     {
-        $networkStats = $this->getNetworkStats();
-        foreach ($networkStats as $metric => $data) {
-            foreach ($data as $direction => $value) {
-                if (isset($this->metrics[$metric])) {
-                    if ($this->metrics[$metric] instanceof Histogram) {
-                        $this->metrics[$metric]->record($value, ['direction' => $direction, 'host' => gethostname()]);
-                    } elseif ($this->metrics[$metric] instanceof Counter) {
-                        $this->metrics[$metric]->add($value, ['direction' => $direction, 'host' => gethostname()]);
+        try {
+            $networkStats = $this->getNetworkStats();
+            foreach ($networkStats as $metric => $data) {
+                foreach ($data as $direction => $value) {
+                    if (isset($this->metrics[$metric])) {
+                        if ($this->metrics[$metric] instanceof Histogram) {
+                            $this->metrics[$metric]->record($value, ['direction' => $direction, 'host' => gethostname()]);
+                        } elseif ($this->metrics[$metric] instanceof Counter) {
+                            $this->metrics[$metric]->add($value, ['direction' => $direction, 'host' => gethostname()]);
+                        }
                     }
                 }
             }
-        }
 
-        $connections = $this->getNetworkConnections();
-        foreach ($connections as $state => $count) {
-            $this->metrics['activeConnections']->record($count, ['state' => $state, 'host' => gethostname()]);
+            $connections = $this->getNetworkConnections();
+            foreach ($connections as $state => $count) {
+                $this->metrics['activeConnections']->record($count, ['state' => $state, 'host' => gethostname()]);
+            }
+        } catch (Throwable $e) {
+            Log::error('Error recording network metrics: ' . $e->getMessage(), ['exception' => $e->getMessage(), 'stack' => $e->getTraceAsString()]);
         }
     }
 
     public function recordDbMetrics($query): void
     {
-        $executionTime = $query->time / 1000; // Convert milliseconds to seconds
-        $this->metrics['dbQueryCount']->add(1, ['query' => $query->sql, 'host' => gethostname()]);
-        $this->metrics['dbQueryLatency']->record($executionTime, ['query' => $query->sql, 'host' => gethostname()]);
+        try {
+            $executionTime = $query->time / 1000; // Convert milliseconds to seconds
+            $this->metrics['dbQueryCount']->add(1, ['query' => $query->sql, 'host' => gethostname()]);
+            $this->metrics['dbQueryLatency']->record($executionTime, ['query' => $query->sql, 'host' => gethostname()]);
 
-        if (isset($query->error)) {
-            $this->metrics['dbErrorCount']->add(1, ['error' => $query->error, 'host' => gethostname()]);
+            if (isset($query->error)) {
+                $this->metrics['dbErrorCount']->add(1, ['error' => $query->error, 'host' => gethostname()]);
+            }
+        } catch (Throwable $e) {
+            Log::error('Error recording DB metrics: ' . $e->getMessage(), ['exception' => $e->getMessage(), 'stack' => $e->getTraceAsString()]);
         }
     }
 
