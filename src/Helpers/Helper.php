@@ -4,7 +4,6 @@ namespace Laratel\Opentelemetry\Helpers;
 
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use Throwable;
 
 class Helper
 {

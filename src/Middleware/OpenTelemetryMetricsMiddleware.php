@@ -7,19 +7,16 @@ use Laratel\Opentelemetry\Services\MetricsService;
 use Laratel\Opentelemetry\Helpers\Helper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 class OpenTelemetryMetricsMiddleware
 {
-    protected MetricsService $metrics;
     private Helper $helper;
     protected float $startTime;
 
-    public function __construct(MetricsService $metrics, Helper $helper)
+    public function __construct(Helper $helper)
     {
-        $this->metrics = $metrics;
         $this->helper = $helper;
     }
 
@@ -30,7 +27,9 @@ class OpenTelemetryMetricsMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
-        if (!$this->metrics->metrics) {
+        $metrics = new MetricsService();
+
+        if (!$metrics->metrics) {
             // Skip recording if metrics are not available
             return $next($request);
         }
@@ -53,45 +52,29 @@ class OpenTelemetryMetricsMiddleware
 
         try {
             // Start recording database and cache metrics
-            DB::listen(function ($query) {
-                $this->metrics->recordDbMetrics($query); // Record database query metrics
+            DB::listen(function ($query) use ($metrics) {
+                $metrics->recordDbMetrics($query); // Record database query metrics
             });
 
-            $this->metrics->wrapCacheOperations(); // Record cache operations
+            $metrics->wrapCacheOperations(); // Record cache operations
 
             // Process the request and capture the response
             $response = $next($request);
 
             // Record HTTP and system metrics
-            $this->metrics->recordMetrics($request, $response, $this->startTime);
-            $this->metrics->recordSystemMetrics(); // Record system-level metrics
-            $this->metrics->recordNetworkMetrics(); // Record network-level metrics
+            $metrics->recordMetrics($request, $response, $this->startTime);
+            $metrics->recordSystemMetrics(); // Record system-level metrics
+            $metrics->recordNetworkMetrics(); // Record network-level metrics
 
             return $response;
         } catch (Throwable $e) {
             // Record error metrics if something goes wrong
-            $this->metrics->recordErrorMetrics($e);
-
-            // Log the error, continue processing the request without affecting the flow
-            Log::error('OpenTelemetry Metrics Recording Error: ' . $e->getMessage(), [
-                'exception' => $e->getMessage(),
-                'stack' => $e->getTraceAsString(),
-                'request' => $request->all()
-            ]);
+            $metrics->recordErrorMetrics($e);
 
             return $next($request); // Continue processing without failing the request
         } finally {
             // Flush metrics data to the collector, only if metrics were successfully captured
-            try {
-                $this->helper->flushMetrics();
-            } catch (Throwable $flushError) {
-                // Log the flush error but don't interrupt the request flow
-                Log::error('OpenTelemetry Metrics Flush Error: ' . $flushError->getMessage(), [
-                    'exception' => $flushError->getMessage(),
-                    'stack' => $flushError->getTraceAsString(),
-                    'request' => $request->all()
-                ]);
-            }
+            $this->helper->flushMetrics();
         }
     }
 }

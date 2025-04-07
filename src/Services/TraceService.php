@@ -4,16 +4,15 @@ namespace Laratel\Opentelemetry\Services;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class TraceService
 {
     private static bool $listenerRegistered = false;
 
-    public function getTracer(): ?object
+    public function getTracer(): ? object
     {
-        return app('tracer');
+        return app()->bound('tracer') ? app('tracer') : null;
     }
 
     public function dbQueryTrace(): void
@@ -29,30 +28,23 @@ class TraceService
 
         self::$listenerRegistered = true;
 
-        try {
-            DB::listen(function ($query) use ($tracer) {
-                if ($this->shouldExcludeQuery($query->sql)) {
-                    return;  // Skip excluded queries
-                }
+        DB::listen(function ($query) use ($tracer) {
+            if ($this->shouldExcludeQuery($query->sql)) {
+                return;  // Skip excluded queries
+            }
 
-                $startTime = (int) (microtime(true) * 1_000_000_000);
+            $startTime = (int) (microtime(true) * 1_000_000_000);
 
-                $span = $tracer->spanBuilder('SQL Query: ' . $query->sql)
-                    ->setAttribute('db.system', 'mysql')
-                    ->setAttribute('db.statement', $query->sql)
-                    ->setAttribute('db.bindings', json_encode($query->bindings))
-                    ->setStartTimestamp($startTime)
-                    ->startSpan();
+            $span = $tracer->spanBuilder('SQL Query: ' . $query->sql)
+                ->setAttribute('db.system', 'mysql')
+                ->setAttribute('db.statement', $query->sql)
+                ->setAttribute('db.bindings', json_encode($query->bindings))
+                ->setStartTimestamp($startTime)
+                ->startSpan();
 
-                // End the span after execution time
-                $span->end($startTime + (int) ($query->time * 1_000_000));
-            });
-        } catch (Throwable $e) {
-            Log::error('Error registering DB query listener for OpenTelemetry', [
-                'exception' => $e->getMessage(),
-                'stack' => $e->getTraceAsString(),
-            ]);
-        }
+            // End the span after execution time
+            $span->end($startTime + (int) ($query->time * 1_000_000));
+        });
     }
 
     public function setSpanAttributes($span, Request $request, $response): void

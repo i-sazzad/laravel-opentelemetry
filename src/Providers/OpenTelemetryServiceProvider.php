@@ -2,8 +2,6 @@
 
 namespace Laratel\Opentelemetry\Providers;
 
-use GuzzleHttp\Client;
-use GuzzleHttp\Exception\GuzzleException;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Log;
 use OpenTelemetry\SDK\Common\Instrumentation\InstrumentationScopeFactory;
@@ -14,13 +12,13 @@ use OpenTelemetry\SDK\Metrics\StalenessHandler\ImmediateStalenessHandlerFactory;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
-use OpenTelemetry\Contrib\Grpc\GrpcTransportFactory;
-use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
-use OpenTelemetry\Contrib\Otlp\SpanExporter;
 use OpenTelemetry\Contrib\Otlp\MetricExporter;
 use OpenTelemetry\SDK\Trace\Sampler\AlwaysOnSampler;
 use OpenTelemetry\SDK\Common\Attribute\AttributesFactory;
 use OpenTelemetry\SDK\Metrics\MetricFactory\StreamFactory;
+use OpenTelemetry\Contrib\Grpc\GrpcTransportFactory;
+use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
+use OpenTelemetry\Contrib\Otlp\SpanExporter;
 use OpenTelemetry\API\Common\Time\SystemClock;
 use OpenTelemetry\Context\ContextStorage;
 
@@ -30,8 +28,10 @@ class OpenTelemetryServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__ . '/../config/opentelemetry.php', 'opentelemetry');
 
-        $this->registerTracer();
-        $this->registerMetrics();
+        if($this->isOpenTelemetryServerReachable()){
+            $this->registerTracer();
+            $this->registerMetrics();
+        }
     }
 
     private function registerTracer(): void
@@ -39,11 +39,6 @@ class OpenTelemetryServiceProvider extends ServiceProvider
         $this->app->singleton('tracer', function () {
             $endpoint = config('opentelemetry.endpoint');
             $protocol = config('opentelemetry.protocol');
-
-            if (!filter_var($endpoint, FILTER_VALIDATE_URL) || !$this->isOpenTelemetryServerReachable()) {
-                Log::error('Invalid or unreachable OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
-                return null;  // Return null if endpoint is invalid
-            }
 
             try {
                 $spanExporter = match ($protocol) {
@@ -82,11 +77,6 @@ class OpenTelemetryServiceProvider extends ServiceProvider
         $this->app->singleton('meterProvider', function () {
             $endpoint = config('opentelemetry.endpoint');
             $protocol = config('opentelemetry.protocol');
-
-            if (!filter_var($endpoint, FILTER_VALIDATE_URL) || !$this->isOpenTelemetryServerReachable()) {
-                Log::error('Invalid or unreachable OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
-                return null;  // Return null if endpoint is invalid
-            }
 
             try {
                 $metricExporter = match ($protocol) {
@@ -137,18 +127,35 @@ class OpenTelemetryServiceProvider extends ServiceProvider
 
     private function isOpenTelemetryServerReachable(): bool
     {
-        $client = new Client();
-        try {
-            // Attempt to send a simple request (e.g., a GET request) to the OpenTelemetry endpoint
-            $response = $client->get(config('opentelemetry.endpoint') . '/health', [
-                'timeout' => 1 // Set a short timeout for the request
-            ]);
-            return $response->getStatusCode() === 200;
-        } catch (GuzzleException $e) {
-            // Log the error but do not interrupt the request flow
-            Log::warning('Failed to connect to OpenTelemetry server: ' . $e->getMessage());
-            return false;  // Return false to skip tracing
+        // Check in Laravel's app memory for request lifecycle
+        if (app()->has('otel.server_reachable')) {
+            return app('otel.server_reachable');
         }
+
+        $endpoint = config('opentelemetry.endpoint');
+
+        if (!filter_var($endpoint, FILTER_VALIDATE_URL)) {
+            Log::error('Invalid OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
+            app()->instance('otel.server_reachable', false);
+            return false;
+        }
+
+        $host = parse_url($endpoint, PHP_URL_HOST);
+        $port = parse_url($endpoint, PHP_URL_PORT) ?? 4318;
+
+        // Non-blocking socket check with a very short timeout (e.g., 1 second)
+        $connection = @fsockopen($host, $port, $errno, $err_str, 0.5);
+
+        $reachable = false;
+        if ($connection) {
+            fclose($connection);
+            $reachable = true;
+        } else {
+            Log::error('Unreachable OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
+        }
+
+        app()->instance('otel.server_reachable', $reachable);
+        return $reachable;
     }
 
     public function boot(): void
