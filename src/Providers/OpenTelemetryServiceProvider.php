@@ -21,6 +21,8 @@ use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
 use OpenTelemetry\API\Common\Time\SystemClock;
 use OpenTelemetry\Context\ContextStorage;
+use Psr\Container\ContainerExceptionInterface;
+use Psr\Container\NotFoundExceptionInterface;
 
 class OpenTelemetryServiceProvider extends ServiceProvider
 {
@@ -125,36 +127,39 @@ class OpenTelemetryServiceProvider extends ServiceProvider
         });
     }
 
+    /**
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     */
     private function isOpenTelemetryServerReachable(): bool
     {
-        // Check in Laravel's app memory for request lifecycle
-        if (app()->has('otel.server_reachable')) {
-            return app('otel.server_reachable');
+        if (request()->has('otel.server_reachable')) {
+            return request()->get('otel.server_reachable');
         }
 
         $endpoint = config('opentelemetry.endpoint');
-
         if (!filter_var($endpoint, FILTER_VALIDATE_URL)) {
             Log::error('Invalid OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
-            app()->instance('otel.server_reachable', false);
+            request()->merge(['otel.server_reachable' => false]);  // Store it in the request
             return false;
         }
 
         $host = parse_url($endpoint, PHP_URL_HOST);
         $port = parse_url($endpoint, PHP_URL_PORT) ?? 4318;
 
-        // Non-blocking socket check with a very short timeout (e.g., 1 second)
-        $connection = @fsockopen($host, $port, $errno, $err_str, 0.5);
+        $connection = @fsockopen($host, $port, $errno, $err_str, 0.1);
 
         $reachable = false;
         if ($connection) {
             fclose($connection);
             $reachable = true;
         } else {
-            Log::error('Unreachable OTEL_EXPORTER_OTLP_ENDPOINT URL provided.');
+            Log::error('Unreachable OTEL_EXPORTER_OTLP_ENDPOINT URL provided. Error: ' . $err_str);
         }
 
-        app()->instance('otel.server_reachable', $reachable);
+        // Store the result in the request object for this lifecycle
+        request()->merge(['otel.server_reachable' => $reachable]);
+
         return $reachable;
     }
 
