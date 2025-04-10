@@ -36,13 +36,13 @@
     "repositories": [
         {
             "type": "vcs",
-            "url": "https://github.com/i-sazzad/laratel-opentelemetry"
+            "url": "https://github.com/i-sazzad/laravel-opentelemetry"
         }
     ],
     "minimum-stability": "stable",
-    "prefer-stable": true
+    "prefer-stable": true,
     "keywords": ["laravel", "laratel", "opentelemetry", "tracing", "metrics", "logging", "real-time monitoring", "observability", "performance monitoring", "telemetry", "PHP", "application performance", "open-source", "middleware", 
         "distributed tracing", "monitoring tools", "error tracking", "request tracing", "API monitoring", "metrics exporter", "performance profiling", "cloud observability", "scalable monitoring", "debugging", "error logs", 
         "visualizing performance", "telemetry SDK", "opentelemetry exporter", "event-driven architecture", "OTLP", "grpc", "PHP telemetry integration", "open-source observability", "backend monitoring", 
-        "microservices monitoring", "service monitoring"]
+        "microservices monitoring", "service monitoring", "laravel-opentelemetry"]
 }
