@@ -37,6 +37,30 @@
 composer require laratel/opentelemetry
 ```
 
+⚠️ If you encounter the following error:
+
+```
+open-telemetry/transport-grpc 1.1.3 requires ext-grpc * -> it is missing from your system.
+```
+
+It means the **gRPC PHP extension** is not installed or enabled. You can fix this by:
+
+- Enabling the `grpc` extension in your `php.ini` file:
+
+  ```
+  extension=grpc
+  ```
+
+  For example: `C:\xampp\php\php.ini` on Windows.
+
+- Restart your web server (Apache, Nginx) or PHP-FPM service after making changes.
+
+- Alternatively, to bypass this requirement during development, use:
+
+  ```bash
+  composer require laratel/opentelemetry --ignore-platform-req=ext-grpc
+  ```
+
 ---
 
 ### 2. Register the Service Provider
@@ -96,6 +120,25 @@ Add the following configuration to `config/logging.php` for enhanced OpenTelemet
 ---
 
 ## Usage
+
+## Environment Variables
+
+To configure OpenTelemetry via environment variables, include the following in your `.env` file:
+
+```env
+OTEL_SERVICE_NAME=your_service_name
+OTEL_PHP_AUTOLOAD_ENABLED=true
+OTEL_TRACES_EXPORTER=otlp
+OTEL_METRICS_EXPORTER=otlp
+OTEL_LOGS_EXPORTER=otlp
+OTEL_PROPAGATORS=baggage,tracecontext
+OTEL_TRACES_SAMPLER=always_on
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+OTEL_EXPORTER_OTLP_ENDPOINT=http://your_otel_collector_endpoint:port
+OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,service.namespace=service_namespace,service.version=1.0,service.instance.id=instance_id
+```
+
+---
 
 ### Middleware
 
@@ -193,25 +236,6 @@ use Laratel\Opentelemetry\Services\MetricsService;
 
 $metricsService = app(MetricsService::class);
 $metricsService->metrics['requestCount']->add(1, ['route' => '/example']);
-```
-
----
-
-## Environment Variables
-
-To configure OpenTelemetry via environment variables, include the following in your `.env` file:
-
-```env
-OTEL_SERVICE_NAME=your_service_name
-OTEL_PHP_AUTOLOAD_ENABLED=true
-OTEL_TRACES_EXPORTER=otlp
-OTEL_METRICS_EXPORTER=otlp
-OTEL_LOGS_EXPORTER=otlp
-OTEL_PROPAGATORS=baggage,tracecontext
-OTEL_TRACES_SAMPLER=always_on
-OTEL_EXPORTER_OTLP_PROTOCOL=grpc
-OTEL_EXPORTER_OTLP_ENDPOINT=http://your_otel_collector_endpoint:port
-OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,service.namespace=service_namespace,service.version=1.0,service.instance.id=instance_id
 ```
 
 ---
