@@ -15,6 +15,15 @@ class TraceService
         return app()->bound('tracer') ? app('tracer') : null;
     }
 
+    public function getCustomTracer()
+    {
+        if(app()->bound('tracer')){
+            return app('tracer');
+        }else{
+            die("Unreachable OTEL_EXPORTER_OTLP_ENDPOINT URL provided");
+        }
+    }
+
     public function dbQueryTrace(): void
     {
         $tracer = $this->getTracer();
@@ -71,7 +80,7 @@ class TraceService
         ]);
     }
 
-    public function addCustomEvents($span, Request $request, $response, $startTime): void
+    public function addRouteEvents($span, Request $request, $response, $startTime): void
     {
         $span->addEvent('request.processed', [
             'processing_time_ms' => (microtime(true) - $startTime) * 1000,
