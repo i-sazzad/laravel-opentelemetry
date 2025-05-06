@@ -57,9 +57,7 @@ class OpenTelemetryTraceMiddleware
             $trace->setSpanAttributes($span, $request, null);
             $trace->addRouteEvents($span, $request, null, $startTime);
 
-            return response()->json([
-                'message' => 'Something went wrong.',
-            ], 500);
+            return response()->json(['message' => $e->getMessage()], 500);
         } finally {
             // Always ensure that the span is ended and detached
             $scope?->detach();
