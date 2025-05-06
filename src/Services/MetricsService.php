@@ -31,9 +31,9 @@ class MetricsService
     {
         $this->metrics = [
             // HTTP metrics
-            'requestCount' => $this->meter->createCounter('http_request_count', ''),
-            'statusCodeCount' => $this->meter->createCounter('http_status_code_count', ''),
-            'requestLatency' => $this->meter->createHistogram('http_request_latency', ''),
+            'requestCount' => $this->meter->createCounter('http_request_total', ''),
+            'statusCodeCount' => $this->meter->createCounter('http_status_code_total', ''),
+            'requestLatency' => $this->meter->createHistogram('http_request_latency_seconds', ''),
             'requestSize' => $this->meter->createHistogram('http_request_size_bytes', ''),
             'responseSize' => $this->meter->createHistogram('http_response_size_bytes', ''),
 
@@ -53,19 +53,19 @@ class MetricsService
             'activeConnections' => $this->meter->createGauge('active_network_connections', ''),
 
             // Database metrics
-            'dbQueryCount' => $this->meter->createCounter('db_query_count', ''),
-            'dbQueryLatency' => $this->meter->createHistogram('db_query_latency', ''),
-            'dbErrorCount' => $this->meter->createCounter('db_error_count', ''),
+            'dbQueryCount' => $this->meter->createCounter('db_query_total', ''),
+            'dbQueryLatency' => $this->meter->createHistogram('db_query_latency_seconds', ''),
+            'dbErrorCount' => $this->meter->createCounter('db_error_total', ''),
 
             // Error metric (added)
-            'errorCount' => $this->meter->createCounter('error_count', ''),
+            'errorCount' => $this->meter->createCounter('error_total', '')
         ];
     }
 
     public function recordMetrics(Request $request, Response $response, $startTime): void
     {
         $latency = microtime(true) - $startTime;
-        
+
         $labels = [
             'method' => $request->method(),
             'route' => $request->path()
