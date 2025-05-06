@@ -175,7 +175,7 @@ Once aliases are registered, use them in your routes:
 
 ```php
 Route::middleware(['opentelemetry.metrics', 'opentelemetry.trace'])->group(function () {
-    Route::get('/example', function () {
+    Route::get('api/example', function () {
         return response()->json(['message' => 'Tracing and metrics enabled']);
     });
 });
@@ -218,39 +218,14 @@ Use the `TraceService` to create custom traces:
 ```php
 use Laratel\Opentelemetry\Services\TraceService;
 
-$traceService = app(TraceService::class);
-$tracer = $traceService->getTracer();
+$traceService = new TraceService();
+$tracer = $traceService->getCustomTracer();
 
 $span = $tracer->spanBuilder('custom-operation')->startSpan();
 $span->setAttribute('custom.attribute', 'value');
 // Perform some operation
 $span->end();
 ```
-
-#### Custom Metrics
-
-Use the `MetricsService` to create and record custom metrics:
-
-```php
-use Laratel\Opentelemetry\Services\MetricsService;
-
-$metricsService = app(MetricsService::class);
-$metricsService->metrics['requestCount']->add(1, ['route' => '/example']);
-```
-
----
-
-## Example
-
-Here’s an example of integrating the package in a Laravel application:
-
-```php
-Route::middleware(['opentelemetry.metrics', 'opentelemetry.trace'])->get('/api/example', function () {
-    return response()->json(['message' => 'Telemetry data collected']);
-});
-```
-
-This will automatically collect traces and metrics for requests to `/api/example` and send them to the configured OTLP endpoint.
 
 ---
 

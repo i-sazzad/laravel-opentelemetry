@@ -25,8 +25,9 @@ class OpenTelemetryTraceMiddleware
         $trace = new TraceService();
 
         $tracer = $trace->getTracer();
+
+        // Skip tracing if tracer is not available
         if (!$tracer) {
-            // Skip tracing if tracer is not available
             return $next($request);
         }
 
@@ -48,13 +49,17 @@ class OpenTelemetryTraceMiddleware
 
             // Set span attributes and add custom events
             $trace->setSpanAttributes($span, $request, $response);
-            $trace->addCustomEvents($span, $request, $response, $startTime);
+            $trace->addRouteEvents($span, $request, $response, $startTime);
 
             return $response;
         } catch (Throwable $e) {
-            // Handle exception and record it in the span, but continue the request
-            $trace->handleException($span ?? null, $e);
-            return $next($request);  // Continue processing without interrupting the request flow
+            $trace->handleException($span, $e);
+            $trace->setSpanAttributes($span, $request, null);
+            $trace->addRouteEvents($span, $request, null, $startTime);
+
+            return response()->json([
+                'message' => 'Something went wrong.',
+            ], 500);
         } finally {
             // Always ensure that the span is ended and detached
             $scope?->detach();
