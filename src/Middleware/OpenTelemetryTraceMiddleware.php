@@ -44,24 +44,23 @@ class OpenTelemetryTraceMiddleware
         $startTime = microtime(true);
 
         try {
-            // Process the request
             $response = $next($request);
 
             // Set span attributes and add custom events
             $trace->setSpanAttributes($span, $request, $response);
             $trace->addRouteEvents($span, $request, $response, $startTime);
-
-            return $response;
         } catch (Throwable $e) {
             $trace->handleException($span, $e);
             $trace->setSpanAttributes($span, $request, null);
             $trace->addRouteEvents($span, $request, null, $startTime);
 
-            return response()->json(['message' => $e->getMessage()], 500);
+            throw $e;
         } finally {
             // Always ensure that the span is ended and detached
             $scope?->detach();
             $span?->end();
         }
+
+        return $response;
     }
 }
