@@ -29,8 +29,8 @@ class OpenTelemetryMetricsMiddleware
     {
         $metrics = new MetricsService();
 
+        // Skip recording if metrics are not available
         if (!$metrics->metrics) {
-            // Skip recording if metrics are not available
             return $next($request);
         }
 
@@ -65,16 +65,16 @@ class OpenTelemetryMetricsMiddleware
             $metrics->recordMetrics($request, $response, $this->startTime);
             $metrics->recordSystemMetrics(); // Record system-level metrics
             $metrics->recordNetworkMetrics(); // Record network-level metrics
-
-            return $response;
         } catch (Throwable $e) {
             // Record error metrics if something goes wrong
             $metrics->recordErrorMetrics($e);
 
-            return $next($request); // Continue processing without failing the request
+            throw $e;
         } finally {
             // Flush metrics data to the collector, only if metrics were successfully captured
             $this->helper->flushMetrics();
         }
+
+        return $response;
     }
 }
