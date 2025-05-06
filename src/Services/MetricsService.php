@@ -71,8 +71,10 @@ class MetricsService
             'route' => $request->path()
         ];
 
+        $statusLabels = array_merge($labels, ['status_code' => $response->getStatusCode()]);
+
         $this->metrics['requestCount']->add(1, $labels);
-        $this->metrics['statusCodeCount']->add(1, array_merge(['status_code' => $response->getStatusCode()], $labels));
+        $this->metrics['statusCodeCount']->add(1, $statusLabels);
         $this->metrics['requestLatency']->record($latency, $labels);
         $this->metrics['requestSize']->record(strlen($request->getContent()), $labels);
         $this->metrics['responseSize']->record(strlen($response->getContent()), $labels);
