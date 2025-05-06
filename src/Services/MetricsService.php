@@ -65,11 +65,17 @@ class MetricsService
     public function recordMetrics(Request $request, Response $response, $startTime): void
     {
         $latency = microtime(true) - $startTime;
-        $this->metrics['requestCount']->add(1, ['method' => $request->method(), 'route' => $request->path()]);
-        $this->metrics['statusCodeCount']->add(1, ['status_code' => $response->getStatusCode(), 'method' => $request->method()]);
-        $this->metrics['requestLatency']->record($latency, ['method' => $request->method(), 'route' => $request->path()]);
-        $this->metrics['requestSize']->record(strlen($request->getContent()), ['method' => $request->method()]);
-        $this->metrics['responseSize']->record(strlen($response->getContent()), ['method' => $request->method()]);
+        
+        $labels = [
+            'method' => $request->method(),
+            'route' => $request->path()
+        ];
+
+        $this->metrics['requestCount']->add(1, $labels);
+        $this->metrics['statusCodeCount']->add(1, array_merge(['status_code' => $response->getStatusCode()], $labels));
+        $this->metrics['requestLatency']->record($latency, $labels);
+        $this->metrics['requestSize']->record(strlen($request->getContent()), $labels);
+        $this->metrics['responseSize']->record(strlen($response->getContent()), $labels);
     }
 
     public function recordSystemMetrics(): void
