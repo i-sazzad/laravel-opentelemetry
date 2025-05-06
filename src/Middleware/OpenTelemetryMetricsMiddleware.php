@@ -51,6 +51,8 @@ class OpenTelemetryMetricsMiddleware
         $this->startTime = microtime(true);
 
         try {
+            $response = $next($request);
+
             // Start recording database and cache metrics
             DB::listen(function ($query) use ($metrics) {
                 $metrics->recordDbMetrics($query); // Record database query metrics
@@ -58,15 +60,11 @@ class OpenTelemetryMetricsMiddleware
 
             $metrics->wrapCacheOperations(); // Record cache operations
 
-            // Process the request and capture the response
-            $response = $next($request);
-
             // Record HTTP and system metrics
             $metrics->recordMetrics($request, $response, $this->startTime);
             $metrics->recordSystemMetrics(); // Record system-level metrics
             $metrics->recordNetworkMetrics(); // Record network-level metrics
         } catch (Throwable $e) {
-            // Record error metrics if something goes wrong
             $metrics->recordErrorMetrics($e);
 
             throw $e;
