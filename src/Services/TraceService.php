@@ -70,7 +70,7 @@ class TraceService
                 ->setAttribute('db.system', $query->connection->getDriverName())
                 ->setAttribute('db.name', $query->connection->getDatabaseName())
                 ->setAttribute('db.statement', $query->sql)
-                // ->setAttribute('db.bindings', json_encode($query->bindings)) // Optional: be cautious with sensitive data
+                 ->setAttribute('db.bindings', json_encode($query->bindings))
                 ->startSpan();
 
             $span->end($startTime + (int) ($query->time * 1_000_000));

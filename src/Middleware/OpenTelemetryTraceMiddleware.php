@@ -38,10 +38,8 @@ readonly class OpenTelemetryTraceMiddleware
             return $next($request);
         }
 
-        // Ensure the database query listener is registered.
         $this->traceService->dbQueryTrace();
 
-        // **FIXED LINE:** Check if the route exists before trying to access methods on it.
         $route = $request->route();
         $spanName = $request->method() . ' ' . ($route ? ($route->getName() ?? $route->uri()) : $request->path());
 
@@ -50,8 +48,6 @@ readonly class OpenTelemetryTraceMiddleware
 
         try {
             $response = $next($request);
-
-            // This is the "happy path". We have a successful response.
             $this->traceService->setSpanAttributes($span, $request, $response);
 
             return $response;
