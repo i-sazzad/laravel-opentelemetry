@@ -3,64 +3,67 @@
 namespace Laratel\Opentelemetry\Middleware;
 
 use Closure;
+use Illuminate\Http\Request;
 use Laratel\Opentelemetry\Helpers\Helper;
 use Laratel\Opentelemetry\Services\TraceService;
-use Illuminate\Http\Request;
 use Throwable;
 
-class OpenTelemetryTraceMiddleware
+readonly class OpenTelemetryTraceMiddleware
 {
-    private Helper $helper;
-
-    public function __construct(Helper $helper)
-    {
-        $this->helper = $helper;
+    /**
+     * Middleware constructor.
+     *
+     * Injects dependencies via the service container for better performance and testability.
+     */
+    public function __construct(
+        private Helper $helper,
+        private TraceService $traceService
+    ) {
     }
 
     /**
+     * Handle an incoming request.
+     *
+     * @param Request $request
+     * @param Closure $next
+     * @return mixed
      * @throws Throwable
      */
-    public function handle(Request $request, Closure $next)
+    public function handle(Request $request, Closure $next): mixed
     {
-        $trace = new TraceService();
+        $tracer = $this->traceService->getTracer();
 
-        $tracer = $trace->getTracer();
-
-        // Skip tracing if tracer is not available
-        if (!$tracer) {
+        // If the tracer isn't available or the path is excluded, skip tracing.
+        if (! $tracer || $this->helper->shouldExclude($request->path())) {
             return $next($request);
         }
 
-        // Skip tracing for excluded paths
-        if ($this->helper->shouldExclude($request->path())) {
-            return $next($request);
-        }
+        // Ensure the database query listener is registered.
+        $this->traceService->dbQueryTrace();
 
-        $trace->dbQueryTrace(); // Set up DB query trace if necessary
+        // **FIXED LINE:** Check if the route exists before trying to access methods on it.
+        $route = $request->route();
+        $spanName = $request->method() . ' ' . ($route ? ($route->getName() ?? $route->uri()) : $request->path());
 
-        // Start a new span for the request
-        $span = $tracer->spanBuilder($request->method() . ' ' . $request->path())->startSpan();
+        $span = $tracer->spanBuilder($spanName)->startSpan();
         $scope = $span->activate();
-        $startTime = microtime(true);
 
         try {
             $response = $next($request);
 
-            // Set span attributes and add custom events
-            $trace->setSpanAttributes($span, $request, $response);
-            $trace->addRouteEvents($span, $request, $response, $startTime);
-        } catch (Throwable $e) {
-            $trace->handleException($span, $e);
-            $trace->setSpanAttributes($span, $request, null);
-            $trace->addRouteEvents($span, $request, null, $startTime);
+            // This is the "happy path". We have a successful response.
+            $this->traceService->setSpanAttributes($span, $request, $response);
 
+            return $response;
+        } catch (Throwable $e) {
+            // The request resulted in an exception.
+            $this->traceService->handleException($span, $e);
+
+            // Re-throw the exception to ensure Laravel's error handling pipeline continues.
             throw $e;
         } finally {
-            // Always ensure that the span is ended and detached
-            $scope?->detach();
-            $span?->end();
+            $scope->detach();
+            $span->end();
         }
-
-        return $response;
     }
 }
