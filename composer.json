@@ -8,7 +8,7 @@
         "open-telemetry/exporter-otlp": "^1.1",
         "open-telemetry/sdk": "^1.1",
         "open-telemetry/transport-grpc": "^1.1",
-        "illuminate/support": "^8.0|^9.0|^10.0|^11.0|^12.0"
+        "illuminate/support": "^8.0|^9.0|^10.0|^11.0"
     },
     "require-dev": {
         "phpunit/phpunit": "^9.5 || ^10.0"
@@ -36,13 +36,9 @@
     "repositories": [
         {
             "type": "vcs",
-            "url": "https://github.com/i-sazzad/laravel-opentelemetry"
+            "url": "https://github.com/i-sazzad/laratel-opentelemetry"
         }
     ],
     "minimum-stability": "stable",
-    "prefer-stable": true,
-    "keywords": ["laravel", "laratel", "opentelemetry", "tracing", "metrics", "logging", "real-time monitoring", "observability", "performance monitoring", "telemetry", "PHP", "application performance", "open-source", "middleware", 
-        "distributed tracing", "monitoring tools", "error tracking", "request tracing", "API monitoring", "metrics exporter", "performance profiling", "cloud observability", "scalable monitoring", "debugging", "error logs", 
-        "visualizing performance", "telemetry SDK", "opentelemetry exporter", "event-driven architecture", "OTLP", "grpc", "PHP telemetry integration", "open-source observability", "backend monitoring", 
-        "microservices monitoring", "service monitoring", "laravel-opentelemetry"]
+    "prefer-stable": true
 }

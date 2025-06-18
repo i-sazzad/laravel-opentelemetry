@@ -127,11 +127,6 @@ To configure OpenTelemetry via environment variables, include the following in y
 
 ```env
 OTEL_SERVICE_NAME=your_service_name
-OTEL_PHP_AUTOLOAD_ENABLED=true
-OTEL_TRACES_EXPORTER=otlp
-OTEL_METRICS_EXPORTER=otlp
-OTEL_LOGS_EXPORTER=otlp
-OTEL_PROPAGATORS=baggage,tracecontext
 OTEL_TRACES_SAMPLER=always_on
 OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 OTEL_EXPORTER_OTLP_ENDPOINT=http://your_otel_collector_endpoint:port
