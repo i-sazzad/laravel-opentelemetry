@@ -6,128 +6,182 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
-use OpenTelemetry\SDK\Metrics\Counter;
-use OpenTelemetry\SDK\Metrics\Histogram;
 
 class MetricsService
 {
     protected mixed $meter;
-    public mixed $metrics;
+    public array $metrics;
 
     public function __construct()
     {
         $this->metrics = [];
         $this->meter = [];
-        if (app()->bound('metrics')) {
-            $this->meter = app('metrics');
-        } else{
-            return null;
+
+        if (!app()->bound('metrics')) {
+            Log::warning('OpenTelemetry meter not bound.');
+            return;
         }
 
+        $this->meter = app('metrics');
         $this->initializeMetrics();
     }
 
+    /**
+     * ----------------------------------------------------
+     * Initialize all application and system metrics
+     * ----------------------------------------------------
+     */
     public function initializeMetrics(): void
     {
         $this->metrics = [
-            // HTTP metrics
-            'requestCount' => $this->meter->createCounter('http_request_total', ''),
-            'statusCodeCount' => $this->meter->createCounter('http_status_code_total', ''),
-            'requestLatency' => $this->meter->createHistogram('http_request_latency_seconds', ''),
-            'requestSize' => $this->meter->createHistogram('http_request_size_bytes', ''),
-            'responseSize' => $this->meter->createHistogram('http_response_size_bytes', ''),
+            // --------------------------------------------------
+            // HTTP METRICS
+            // --------------------------------------------------
+            'http_request_total' => $this->meter->createCounter('laratel_http_request_total', ''),
+            'http_status_code_total' => $this->meter->createCounter('laratel_http_status_code_total', ''),
+            'http_failed_requests_total' => $this->meter->createCounter('laratel_http_failed_requests_total', ''),
+            'http_request_latency_seconds' => $this->meter->createHistogram('laratel_http_request_latency_seconds', ''),
+            'http_request_size_bytes' => $this->meter->createHistogram('laratel_http_request_size_bytes', ''),
+            'http_response_size_bytes' => $this->meter->createHistogram('laratel_http_response_size_bytes', ''),
+            'http_requests_in_progress' => $this->meter->createHistogram('laratel_http_requests_in_progress', ''),
 
-            // System metrics
-            'cpuTime' => $this->meter->createCounter('system_cpu_time_seconds_total', ''),
-            'memoryUsage' => $this->meter->createGauge('system_memory_usage_bytes', ''),
-            'diskUsage' => $this->meter->createHistogram('system_disk_usage_bytes', ''),
-            'uptime' => $this->meter->createGauge('application_uptime_seconds', ''),
+            // --------------------------------------------------
+            // SYSTEM METRICS
+            // --------------------------------------------------
+            'system_cpu_time_seconds_total' => $this->meter->createCounter('laratel_system_cpu_time_seconds_total', ''),
+            'system_memory_usage_bytes' => $this->meter->createHistogram('laratel_system_memory_usage_bytes', ''),
+            'system_disk_usage_bytes' => $this->meter->createHistogram('laratel_system_disk_usage_bytes', ''),
+            'application_uptime_seconds' => $this->meter->createHistogram('laratel_application_uptime_seconds', ''),
 
-            // Network metrics
-            'networkIO' => $this->meter->createCounter('system_network_io_bytes_total', ''),
-            'networkPackets' => $this->meter->createCounter('system_network_packets_total', ''),
-            'networkDropped' => $this->meter->createCounter('system_network_dropped_total', ''),
-            'networkErrors' => $this->meter->createCounter('system_network_errors_total', ''),
-            'networkInbound' => $this->meter->createHistogram('network_inbound_bytes', ''),
-            'networkOutbound' => $this->meter->createHistogram('network_outbound_bytes', ''),
-            'activeConnections' => $this->meter->createGauge('active_network_connections', ''),
+            // --------------------------------------------------
+            // NETWORK METRICS
+            // --------------------------------------------------
+            'system_network_io_bytes_total' => $this->meter->createCounter('laratel_system_network_io_bytes_total', ''),
+            'system_network_dropped_total' => $this->meter->createCounter('laratel_system_network_dropped_total', ''),
+            'system_network_errors_total' => $this->meter->createCounter('laratel_system_network_errors_total', ''),
+            'network_inbound_bytes' => $this->meter->createHistogram('laratel_network_inbound_bytes', ''),
+            'network_outbound_bytes' => $this->meter->createHistogram('laratel_network_outbound_bytes', ''),
+            'active_network_connections' => $this->meter->createHistogram('laratel_active_network_connections', ''),
 
-            // Database metrics
-            'dbQueryCount' => $this->meter->createCounter('db_query_total', ''),
-            'dbQueryLatency' => $this->meter->createHistogram('db_query_latency_seconds', ''),
-            'dbErrorCount' => $this->meter->createCounter('db_error_total', ''),
+            // --------------------------------------------------
+            // DATABASE METRICS
+            // --------------------------------------------------
+            'db_query_total' => $this->meter->createCounter('laratel_db_query_total', ''),
+            'db_query_latency_seconds' => $this->meter->createHistogram('laratel_db_query_latency_seconds', ''),
+            'db_error_total' => $this->meter->createCounter('laratel_db_error_total', ''),
 
-            // Error metric (added)
-            'errorCount' => $this->meter->createCounter('error_total', '')
+            // --------------------------------------------------
+            // CACHE METRICS
+            // --------------------------------------------------
+            'cache_hit_total' => $this->meter->createCounter('laratel_cache_hit_total', ''),
+            'cache_miss_total' => $this->meter->createCounter('laratel_cache_miss_total', ''),
+            'cache_store_total' => $this->meter->createCounter('laratel_cache_store_total', ''),
+            'cache_delete_total' => $this->meter->createCounter('laratel_cache_delete_total', ''),
+
+            // --------------------------------------------------
+            // ERROR METRICS
+            // --------------------------------------------------
+            'error_total' => $this->meter->createCounter('laratel_error_total', ''),
         ];
     }
 
-    public function recordMetrics(Request $request, Response $response, $startTime): void
+    /**
+     * ----------------------------------------------------
+     * Record HTTP metrics for a single request/response
+     * ----------------------------------------------------
+     */
+    public function recordHttpMetrics(Request $request, Response $response, float $startTime): void
     {
         $latency = microtime(true) - $startTime;
+        $status = $response->getStatusCode();
 
         $labels = [
-            'method' => $request->method(),
-            'route' => $request->path()
+            'http.method' => $request->method(),
+            'http.route' => $request->path(),
+            'net.host.name' => gethostname(),
+            'http.status_code' => $status,
         ];
 
-        $statusLabels = array_merge($labels, ['status_code' => $response->getStatusCode()]);
+        try {
+            // In-progress tracking
+            $this->metrics['http_requests_in_progress']->record(+1, $labels);
 
-        $this->metrics['requestCount']->add(1, $labels);
-        $this->metrics['statusCodeCount']->add(1, $statusLabels);
-        $this->metrics['requestLatency']->record($latency, $labels);
-        $this->metrics['requestSize']->record(strlen($request->getContent()), $labels);
-        $this->metrics['responseSize']->record(strlen($response->getContent()), $labels);
+            // Total requests
+            $this->metrics['http_request_total']->add(1, $labels);
+            $this->metrics['http_status_code_total']->add(1, $labels);
+            $this->metrics['http_request_latency_seconds']->record($latency, $labels);
+            $this->metrics['http_request_size_bytes']->record(strlen($request->getContent() ?? ''), $labels);
+            $this->metrics['http_response_size_bytes']->record(strlen($response->getContent() ?? ''), $labels);
+
+            // Failed request detection
+            if ($status >= 400) {
+                $errorType = $status >= 500 ? 'server_error' : 'client_error';
+                $this->metrics['http_failed_requests_total']->add(1, array_merge($labels, [
+                    'error_type' => $errorType,
+                ]));
+            }
+
+            // Mark request done (decrease active)
+            $this->metrics['http_requests_in_progress']->record(-1, $labels);
+        } catch (\Throwable $e) {
+            Log::error("HTTP metrics record failed: {$e->getMessage()}");
+        }
     }
 
+    /**
+     * Record system-level metrics (CPU, memory, disk, uptime)
+     */
     public function recordSystemMetrics(): void
     {
-        $cpuStats = $this->getCpuStats();
-        foreach ($cpuStats as $state => $time) {
-            $this->metrics['cpuTime']->add($time, ['state' => $state, 'host' => gethostname()]);
+        $cpu = $this->getCpuStats();
+        foreach ($cpu as $state => $value) {
+            $this->metrics['system_cpu_time_seconds_total']->add($value, ['state' => $state, 'host' => gethostname()]);
         }
 
-        $memoryInfo = $this->getMemoryInfo();
-        foreach ($memoryInfo as $state => $value) {
-            $this->metrics['memoryUsage']->record($value, ['state' => $state, 'host' => gethostname()]);
+        $mem = $this->getMemoryInfo();
+        foreach ($mem as $key => $value) {
+            $this->metrics['system_memory_usage_bytes']->record($value, ['type' => $key, 'host' => gethostname()]);
         }
 
-        $diskUsage = disk_free_space(config('opentelemetry.disk_path', '/'));
-        $this->metrics['diskUsage']->record($diskUsage, ['host' => gethostname()]);
+        $path = config('opentelemetry.disk_path', '/');
+        $used = @disk_total_space($path) - @disk_free_space($path);
+        $this->metrics['system_disk_usage_bytes']->record($used, ['host' => gethostname()]);
+
+        $uptime = time() - ($_SERVER['REQUEST_TIME_FLOAT'] ?? time());
+        $this->metrics['application_uptime_seconds']->record($uptime, ['host' => gethostname()]);
     }
 
-    public function recordNetworkMetrics(): void
-    {
-        $networkStats = $this->getNetworkStats();
-        foreach ($networkStats as $metric => $data) {
-            foreach ($data as $direction => $value) {
-                if (isset($this->metrics[$metric])) {
-                    if ($this->metrics[$metric] instanceof Histogram) {
-                        $this->metrics[$metric]->record($value, ['direction' => $direction, 'host' => gethostname()]);
-                    } elseif ($this->metrics[$metric] instanceof Counter) {
-                        $this->metrics[$metric]->add($value, ['direction' => $direction, 'host' => gethostname()]);
-                    }
-                }
-            }
-        }
-
-        $connections = $this->getNetworkConnections();
-        foreach ($connections as $state => $count) {
-            $this->metrics['activeConnections']->record($count, ['state' => $state, 'host' => gethostname()]);
-        }
-    }
-
+    /**
+     * Record database query metrics
+     */
     public function recordDbMetrics($query): void
     {
-        $executionTime = $query->time / 1000; // Convert milliseconds to seconds
-        $this->metrics['dbQueryCount']->add(1, ['query' => $query->sql, 'host' => gethostname()]);
-        $this->metrics['dbQueryLatency']->record($executionTime, ['query' => $query->sql, 'host' => gethostname()]);
+        $execTime = ($query->time ?? 0) / 1000;
+        $sql = substr($query->sql ?? 'unknown', 0, 100);
+        $labels = ['query' => $sql, 'host' => gethostname()];
 
-        if (isset($query->error)) {
-            $this->metrics['dbErrorCount']->add(1, ['error' => $query->error, 'host' => gethostname()]);
+        $this->metrics['db_query_total']->add(1, $labels);
+        $this->metrics['db_query_latency_seconds']->record($execTime, $labels);
+
+        if (property_exists($query, 'error') && $query->error) {
+            $this->metrics['db_error_total']->add(1, ['error' => $query->error, 'host' => gethostname()]);
         }
     }
 
+    /**
+     * Record generic error metrics
+     */
+    public function recordErrorMetrics(\Throwable $e): void
+    {
+        $this->metrics['error_total']->add(1, [
+            'message' => substr($e->getMessage(), 0, 120),
+            'host' => gethostname(),
+        ]);
+    }
+
+    /**
+     * Wrap cache operations with metrics tracking
+     */
     public function wrapCacheOperations(): void
     {
         Cache::extend('otel', function ($app, $config) {
@@ -145,7 +199,7 @@ class MetricsService
                 public function get($key)
                 {
                     $value = $this->store->get($key);
-                    $metric = $value ? 'cacheHitCount' : 'cacheMissCount';
+                    $metric = $value ? 'cache_hit_total' : 'cache_miss_total';
                     $this->metrics[$metric]->add(1, ['key' => $key, 'host' => gethostname()]);
                     return $value;
                 }
@@ -153,132 +207,141 @@ class MetricsService
                 public function put($key, $value, $ttl = null): void
                 {
                     $this->store->put($key, $value, $ttl);
-                    $this->metrics['cacheStoreCount']->add(1, ['key' => $key, 'host' => gethostname()]);
+                    $this->metrics['cache_store_total']->add(1, ['key' => $key, 'host' => gethostname()]);
                 }
 
                 public function forget($key): void
                 {
                     $this->store->forget($key);
-                    $this->metrics['cacheDeleteCount']->add(1, ['key' => $key, 'host' => gethostname()]);
+                    $this->metrics['cache_delete_total']->add(1, ['key' => $key, 'host' => gethostname()]);
                 }
 
-                public function __call($method, $parameters)
+                public function __call($method, $params)
                 {
-                    return $this->store->$method(...$parameters);
+                    return $this->store->$method(...$params);
                 }
             };
         });
     }
 
-    public function recordErrorMetrics($e)
-    {
-        return $this->metrics['errorCount']->add(1, ['error' => $e->getMessage(), 'host' => gethostname()]);
-    }
-
+    /**
+     * ----------------------------------------------------
+     * Internal helpers: CPU, Memory, Network
+     * ----------------------------------------------------
+     */
     private function getCpuStats(): array
     {
-        $cpuStates = ['user', 'nice', 'system', 'idle', 'iowait', 'irq', 'softirq', 'steal'];
-        $cpuStats = [];
+        $states = ['user', 'nice', 'system', 'idle', 'iowait', 'irq', 'softirq', 'steal'];
+        $path = config('opentelemetry.cpu_path', '/proc/stat');
+        if (!file_exists($path)) return [];
 
-        if (file_exists(config('opentelemetry.cpu_path', '/proc/stat'))) {
-            $lines = file(config('opentelemetry.cpu_path', '/proc/stat'));
-            foreach ($lines as $line) {
-                if (preg_match('/^cpu\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/', $line, $matches)) {
-                    foreach ($cpuStates as $index => $state) {
-                        $cpuStats[$state] = (int) $matches[$index + 1];
-                    }
-                    break;
-                }
+        $lines = file($path);
+        foreach ($lines as $line) {
+            if (preg_match('/^cpu\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/', $line, $m)) {
+                return array_combine($states, array_map('intval', array_slice($m, 1, 8)));
             }
         }
-
-        return $cpuStats;
+        return [];
     }
 
     private function getMemoryInfo(): array
     {
-        $memoryInfo = [];
+        $path = config('opentelemetry.memory_path', '/proc/meminfo');
+        if (!file_exists($path)) return [];
 
-        if (file_exists(config('opentelemetry.memory_path', '/proc/meminfo'))) {
-            $lines = file(config('opentelemetry.memory_path', '/proc/meminfo'));
-            $rawMemory = [];
-            foreach ($lines as $line) {
-                if (preg_match('/^(\w+):\s+(\d+)\s+kB/', $line, $matches)) {
-                    $key = strtolower(str_replace(['(', ')'], '', $matches[1]));
-                    $rawMemory[$key] = (int) $matches[2] / 1024; // Convert KB to MB
-                }
-            }
-
-            $memoryInfo = [
-                'buffered' => $rawMemory['buffers'] ?? 0,
-                'cached' => $rawMemory['cached'] ?? 0,
-                'free' => $rawMemory['memfree'] ?? 0,
-                'slab_reclaimable' => $rawMemory['slab_reclaimable'] ?? 0,
-                'slab_unreclaimable' => $rawMemory['slab_unreclaimable'] ?? 0,
-                'used' => ($rawMemory['memtotal'] ?? 0) - ($rawMemory['memfree'] ?? 0) - ($rawMemory['buffers'] ?? 0) - ($rawMemory['cached'] ?? 0),
-            ];
-        }
-
-        return $memoryInfo;
-    }
-
-    private function getNetworkConnections(): array
-    {
-        $states = config('opentelemetry.network_states', [
-            'ESTABLISHED', 'CLOSE_WAIT', 'TIME_WAIT', 'LISTEN', 'SYN_SENT', 'SYN_RECV',
-        ]);
-        $connectionCounts = array_fill_keys($states, 0);
-
-        if (file_exists(config('opentelemetry.connection_path', '/proc/net/tcp'))) {
-            $lines = file(config('opentelemetry.connection_path', '/proc/net/tcp'));
-            foreach ($lines as $line) {
-                foreach ($states as $state) {
-                    if (str_contains($line, $state)) {
-                        $connectionCounts[$state]++;
-                    }
-                }
+        $lines = file($path);
+        $raw = [];
+        foreach ($lines as $line) {
+            if (preg_match('/^(\w+):\s+(\d+)/', $line, $m)) {
+                $raw[strtolower($m[1])] = (int)$m[2] * 1024;
             }
         }
 
-        return $connectionCounts;
+        return [
+            'free' => $raw['memfree'] ?? 0,
+            'cached' => $raw['cached'] ?? 0,
+            'buffers' => $raw['buffers'] ?? 0,
+            'used' => ($raw['memtotal'] ?? 0) - (($raw['memfree'] ?? 0) + ($raw['buffers'] ?? 0) + ($raw['cached'] ?? 0)),
+        ];
     }
 
-    private function getNetworkStats(): array
-    {
-        $stats = [
-            'networkIO' => ['receive' => 0, 'transmit' => 0],
-            'networkPackets' => ['receive' => 0, 'transmit' => 0],
-            'networkDropped' => ['receive' => 0, 'transmit' => 0],
-            'networkErrors' => ['receive' => 0, 'transmit' => 0],
-            'networkInbound' => ['bytes' => 0, 'packets' => 0],
-            'networkOutbound' => ['bytes' => 0, 'packets' => 0],
+    /**
+ * Record network-level metrics (I/O, drops, errors, active connections)
+ */
+public function recordNetworkMetrics(): void
+{
+    if (!isset($this->metrics['system_network_io_bytes_total'])) {
+        return;
+    }
+
+    $networkPath = config('opentelemetry.network_path', '/proc/net/dev');
+    if (!file_exists($networkPath) || !is_readable($networkPath)) {
+        return;
+    }
+
+    $lines = file($networkPath);
+
+    foreach ($lines as $line) {
+        // Matches typical /proc/net/dev line format:
+        // iface: bytes packets errs drop fifo frame compressed multicast bytes packets errs drop fifo colls carrier compressed
+        if (preg_match('/^\s*([\w]+):\s*(.+)$/', $line, $m)) {
+            $iface = $m[1];
+            $fields = preg_split('/\s+/', trim($m[2]));
+
+            // Safely extract fields with defaults
+            $rxBytes   = (int)($fields[0] ?? 0);
+            $rxPackets = (int)($fields[1] ?? 0);
+            $rxErrors  = (int)($fields[2] ?? 0);
+            $rxDropped = (int)($fields[3] ?? 0);
+
+            $txBytes   = (int)($fields[8] ?? 0);
+            $txPackets = (int)($fields[9] ?? 0);
+            $txErrors  = (int)($fields[10] ?? 0);
+            $txDropped = (int)($fields[11] ?? 0);
+
+            $labels = ['interface' => $iface, 'host' => gethostname()];
+
+            // Record counters and histograms
+            $this->metrics['system_network_io_bytes_total']->add($rxBytes + $txBytes, $labels);
+            $this->metrics['system_network_dropped_total']->add($rxDropped + $txDropped, $labels);
+            $this->metrics['system_network_errors_total']->add($rxErrors + $txErrors, $labels);
+
+            if (isset($this->metrics['network_inbound_bytes'])) {
+                $this->metrics['network_inbound_bytes']->record($rxBytes, $labels);
+            }
+
+            if (isset($this->metrics['network_outbound_bytes'])) {
+                $this->metrics['network_outbound_bytes']->record($txBytes, $labels);
+            }
+        }
+    }
+
+    // Active connections (TCP states)
+    $connectionPath = config('opentelemetry.connection_path', '/proc/net/tcp');
+    if (file_exists($connectionPath)) {
+        $stateMap = [
+            '01' => 'ESTABLISHED', '02' => 'SYN_SENT', '03' => 'SYN_RECV',
+            '04' => 'FIN_WAIT1', '05' => 'FIN_WAIT2', '06' => 'TIME_WAIT',
+            '07' => 'CLOSE', '08' => 'CLOSE_WAIT', '09' => 'LAST_ACK',
+            '0A' => 'LISTEN', '0B' => 'CLOSING',
         ];
 
-        $networkPath = config('opentelemetry.network_path', '/proc/net/dev');
-        if (!file_exists($networkPath) || !is_readable($networkPath)) {
-            Log::warning("Network stats file {$networkPath} is not accessible.");
-            return $stats;
-        }
-
-        $lines = file($networkPath);
-        foreach ($lines as $line) {
-            if (preg_match('/^\s*(?<interface>[\w]+):\s*(?<receive_bytes>\d+)\s+(?<receive_packets>\d+)\s+\d+\s+\d+\s+(?<receive_dropped>\d+)\s+(?<receive_errors>\d+)\s+\d+\s*(?<transmit_bytes>\d+)\s+(?<transmit_packets>\d+)\s+\d+\s+\d+\s+(?<transmit_dropped>\d+)\s+(?<transmit_errors>\d+)/', $line, $matches)) {
-                // Aggregate general network stats
-                $stats['networkIO']['receive'] += (int)$matches['receive_bytes'];
-                $stats['networkIO']['transmit'] += (int)$matches['transmit_bytes'];
-                $stats['networkDropped']['receive'] += (int)$matches['receive_dropped'];
-                $stats['networkDropped']['transmit'] += (int)$matches['transmit_dropped'];
-                $stats['networkErrors']['receive'] += (int)$matches['receive_errors'];
-                $stats['networkErrors']['transmit'] += (int)$matches['transmit_errors'];
-
-                // Capture inbound and outbound specific stats
-                $stats['networkInbound']['bytes'] += (int)$matches['receive_bytes'];
-                $stats['networkInbound']['packets'] += (int)$matches['receive_packets'];
-                $stats['networkOutbound']['bytes'] += (int)$matches['transmit_bytes'];
-                $stats['networkOutbound']['packets'] += (int)$matches['transmit_packets'];
+        $counts = array_fill_keys(array_values($stateMap), 0);
+        foreach (file($connectionPath) as $line) {
+            if (preg_match('/\s+[0-9A-F]+:\s+[0-9A-F]+\s+[0-9A-F]+\s+([0-9A-F]{2})/', $line, $m)) {
+                $hex = strtoupper($m[1]);
+                if (isset($stateMap[$hex])) {
+                    $counts[$stateMap[$hex]]++;
+                }
             }
         }
 
-        return $stats;
+        foreach ($counts as $state => $count) {
+            $this->metrics['active_network_connections']->record($count, [
+                'state' => $state,
+                'host' => gethostname(),
+            ]);
+        }
     }
+}
 }
