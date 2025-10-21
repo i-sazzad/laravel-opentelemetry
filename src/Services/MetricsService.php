@@ -148,7 +148,7 @@ class MetricsService
         $path = config('opentelemetry.disk_path', '/');
         $total = @disk_total_space($path);
         $free  = @disk_free_space($path);
-        $used = @disk_total_space($path) - @disk_free_space($path);
+        $used = $total - $free;
 
         $this->metrics['system_disk_total_bytes']->record($total, ['host' => gethostname()]);
         $this->metrics['system_disk_free_bytes']->record($free, ['host' => gethostname()]);
