@@ -50,6 +50,8 @@ class MetricsService
             // --------------------------------------------------
             'system_cpu_time_seconds_total' => $this->meter->createCounter('laratel_system_cpu_time_seconds_total', ''),
             'system_memory_usage_bytes' => $this->meter->createHistogram('laratel_system_memory_usage_bytes', ''),
+            'system_disk_total_bytes' => $this->meter->createHistogram('laratel_system_disk_total_bytes', ''),
+            'system_disk_free_bytes' => $this->meter->createHistogram('laratel_system_disk_free_bytes', ''),
             'system_disk_usage_bytes' => $this->meter->createHistogram('laratel_system_disk_usage_bytes', ''),
             'application_uptime_seconds' => $this->meter->createHistogram('laratel_application_uptime_seconds', ''),
 
@@ -144,7 +146,12 @@ class MetricsService
         }
 
         $path = config('opentelemetry.disk_path', '/');
+        $total = @disk_total_space($path);
+        $free  = @disk_free_space($path);
         $used = @disk_total_space($path) - @disk_free_space($path);
+
+        $this->metrics['system_disk_total_bytes']->record($total, ['host' => gethostname()]);
+        $this->metrics['system_disk_free_bytes']->record($free, ['host' => gethostname()]);
         $this->metrics['system_disk_usage_bytes']->record($used, ['host' => gethostname()]);
 
         $uptime = time() - ($_SERVER['REQUEST_TIME_FLOAT'] ?? time());
