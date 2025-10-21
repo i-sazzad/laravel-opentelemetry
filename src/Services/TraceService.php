@@ -5,54 +5,33 @@ namespace Laratel\Opentelemetry\Services;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use OpenTelemetry\API\Common\Time\Clock;
 use OpenTelemetry\API\Trace\SpanInterface;
 use OpenTelemetry\API\Trace\TracerInterface;
+use OpenTelemetry\API\Trace\StatusCode;
 use Throwable;
 
 class TraceService
 {
-    /**
-     * The OpenTelemetry Tracer instance.
-     * @var TracerInterface|null
-     */
     private ?TracerInterface $tracer;
-
-    /**
-     * Flag to ensure the DB listener is only registered once.
-     */
     private static bool $listenerRegistered = false;
-
-    /**
-     * Cache for the compiled exclusion regex pattern.
-     */
     private static ?string $exclusionPattern = null;
 
-    /**
-     * TraceService constructor.
-     * Resolves the tracer from the service container once.
-     */
     public function __construct()
     {
         $this->tracer = app()->bound('tracer') ? app('tracer') : null;
     }
 
-    /**
-     * Returns the tracer instance.
-     *
-     * @return TracerInterface|null
-     */
     public function getTracer(): ?TracerInterface
     {
         return $this->tracer;
     }
 
     /**
-     * Registers a listener to trace database queries.
-     * This method is now idempotent and safe to call multiple times.
+     * Registers a listener to trace database queries (idempotent).
      */
     public function dbQueryTrace(): void
     {
-        // Exit if the tracer is not available or if the listener is already registered.
         if (! $this->tracer || self::$listenerRegistered) {
             return;
         }
@@ -62,25 +41,26 @@ class TraceService
                 return;
             }
 
-            // Record the query as a new span.
-            $startTime = (int) (microtime(true) * 1_000_000_000) - (int) ($query->time * 1_000_000);
+            $clock = Clock::getDefault();
+            $endTime = $clock->now();
+            $startTime = $endTime - (int) ($query->time * 1_000_000);
 
-            $span = $this->tracer->spanBuilder('SQL Query')
+            $span = $this->tracer->spanBuilder($query->sql)
                 ->setStartTimestamp($startTime)
                 ->setAttribute('db.system', $query->connection->getDriverName())
                 ->setAttribute('db.name', $query->connection->getDatabaseName())
                 ->setAttribute('db.statement', $query->sql)
-                 ->setAttribute('db.bindings', json_encode($query->bindings))
                 ->startSpan();
 
-            $span->end($startTime + (int) ($query->time * 1_000_000));
+            $span->setStatus(StatusCode::STATUS_OK);
+            $span->end($endTime);
         });
 
         self::$listenerRegistered = true;
     }
 
     /**
-     * Adds standard HTTP and request attributes to a given span.
+     * Set standard HTTP span attributes.
      */
     public function setSpanAttributes(SpanInterface $span, Request $request, $response): void
     {
@@ -91,58 +71,55 @@ class TraceService
             'http.status_code' => $response->getStatusCode(),
             'http.client_ip' => $request->ip(),
             'http.user_agent' => $request->header('User-Agent', 'unknown'),
-            'request.content_length' => (int) $request->header('Content-Length', 0),
-            'response.content_length' => strlen($response->getContent() ?? ''),
-            'response.time_ms' => (microtime(true) - LARAVEL_START) * 1000,
+            'http.request_content_length' => (int) $request->header('Content-Length', 0),
+            'http.response_content_length' => strlen($response->getContent() ?? ''),
+            'http.response_time_ms' => (microtime(true) - LARAVEL_START) * 1000,
         ]);
 
         if ($request->user()) {
-            $span->setAttribute('user.id', $request->user()->id);
+            $span->setAttribute('enduser.id', $request->user()->id);
         }
+
+        $span->setStatus(StatusCode::STATUS_OK);
     }
 
     /**
-     * Records an exception on a given span, marking it as an error.
+     * Record and mark an exception on the span.
      */
     public function handleException(SpanInterface $span, Throwable $exception): void
     {
-        $span->recordException($exception);
-        $span->setStatus('error', $exception->getMessage());
+        $span->recordException($exception, [
+            'exception.type' => get_class($exception),
+            'exception.message' => $exception->getMessage(),
+        ]);
+        $span->setStatus(StatusCode::STATUS_ERROR, $exception->getMessage());
     }
 
     /**
-     * Checks if a given SQL query should be excluded from tracing based on configuration.
-     *
-     * This method compiles and caches a regex pattern for performance.
+     * Exclude certain queries from tracing (based on config).
      */
     private function shouldExcludeQuery(string $sql): bool
     {
-        $excludedQueries = config('opentelemetry.excluded_queries');
+        $excludedQueries = config('opentelemetry.excluded_queries', []);
 
         if (empty($excludedQueries)) {
             return false;
         }
 
-        // Compile and cache the regex pattern for efficiency.
         if (self::$exclusionPattern === null) {
-            $patterns = array_map('preg_quote', $excludedQueries, ['/']);
-            self::$exclusionPattern = '/' . implode('|', $patterns) . '/i';
+            $patterns = array_map(fn($q) => preg_quote($q, '/'), $excludedQueries);
+            self::$exclusionPattern = '/(' . implode('|', $patterns) . ')/i';
         }
 
         return (bool) preg_match(self::$exclusionPattern, $sql);
     }
 
     /**
-     * Gets a descriptive name for the current route.
+     * Get route name or URI.
      */
     private function getRouteName(Request $request): string
     {
         $route = $request->route();
-
-        if (! $route) {
-            return 'unknown';
-        }
-
-        return $route->getName() ?? $route->uri();
+        return $route ? ($route->getName() ?? $route->uri()) : 'unknown';
     }
 }
