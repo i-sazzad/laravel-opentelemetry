@@ -183,7 +183,11 @@ class MetricsService
     {
         $execTime = ($query->time ?? 0) / 1000;
         $sql = substr($query->sql ?? 'unknown', 0, 100);
-        $labels = ['query' => $sql, 'host' => gethostname()];
+        $labels = [
+            'query' => $sql, 
+            'host' => gethostname(), 
+            'service.name' => config('opentelemetry.service_name')
+        ];
 
         $this->metrics['db_query_total']->add(1, $labels);
         $this->metrics['db_query_latency_seconds']->record($execTime, $labels);
@@ -335,7 +339,11 @@ public function recordNetworkMetrics(): void
             $txErrors  = (int)($fields[10] ?? 0);
             $txDropped = (int)($fields[11] ?? 0);
 
-            $labels = ['interface' => $iface, 'host' => gethostname()];
+            $labels = [
+                'interface' => $iface, 
+                'host' => gethostname(), 
+                'service.name' => config('opentelemetry.service_name')
+            ];
 
             // Record counters and histograms
             $this->metrics['system_network_io_bytes_total']->add($rxBytes + $txBytes, $labels);
