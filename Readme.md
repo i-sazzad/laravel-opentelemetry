@@ -224,6 +224,49 @@ $span->end();
 
 ---
 
+## Exported Metrics
+
+#### HTTP Metrics
+- laratel_http_request_total  
+- laratel_http_status_code_total  
+- laratel_http_failed_requests_total  
+- laratel_http_request_latency_seconds  
+- laratel_http_request_size_bytes  
+- laratel_http_response_size_bytes  
+- laratel_http_requests_in_progress  
+
+#### System Metrics
+- laratel_system_cpu_time_seconds_total  
+- laratel_system_memory_usage_bytes  
+- laratel_system_disk_total_bytes  
+- laratel_system_disk_free_bytes  
+- laratel_system_disk_usage_bytes  
+- laratel_application_uptime_seconds  
+
+#### Network Metrics
+- laratel_system_network_io_bytes_total  
+- laratel_system_network_dropped_total  
+- laratel_system_network_errors_total  
+- laratel_network_inbound_bytes  
+- laratel_network_outbound_bytes  
+- laratel_active_network_connections  
+
+#### Database Metrics
+- laratel_db_query_total  
+- laratel_db_query_latency_seconds  
+- laratel_db_error_total  
+
+#### Cache Metrics
+- laratel_cache_hit_total  
+- laratel_cache_miss_total  
+- laratel_cache_store_total  
+- laratel_cache_delete_total  
+
+#### Error Metrics
+- laratel_error_total
+
+---
+
 ## Repository for Related Tools and Configurations
 
 Find a complete repository containing Docker Compose file, configuration files for OpenTelemetry Collector, Prometheus, Tempo, Loki, Promtail and Grafana [here](https://github.com/i-sazzad/otel).

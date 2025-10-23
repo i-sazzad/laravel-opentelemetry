@@ -100,7 +100,7 @@ class TraceService
      */
     private function shouldExcludeQuery(string $sql): bool
     {
-        $excludedQueries = config('opentelemetry.excluded_queries', []);
+        $excludedQueries = config('opentelemetry.excluded_queries');
 
         if (empty($excludedQueries)) {
             return false;

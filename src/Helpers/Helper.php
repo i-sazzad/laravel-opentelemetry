@@ -13,7 +13,7 @@ class Helper
      */
     public function shouldExclude(string $path): bool
     {
-        $excludedPatterns = config('opentelemetry.excluded_routes', []);
+        $excludedPatterns = config('opentelemetry.excluded_routes');
 
         foreach ($excludedPatterns as $pattern) {
             if (Str::is($pattern, $path)) {

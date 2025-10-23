@@ -36,8 +36,8 @@ class OpenTelemetryServiceProvider extends ServiceProvider
             return;
         }
 
-        $endpoint = env('OTEL_EXPORTER_OTLP_ENDPOINT', config('opentelemetry.endpoint'));
-        $protocol = config('opentelemetry.protocol', 'http');
+        $endpoint = config('opentelemetry.endpoint');
+        $protocol = config('opentelemetry.protocol');
 
         $this->registerTracerProvider($endpoint, $protocol);
         $this->registerMeterProvider($endpoint, $protocol);
@@ -97,8 +97,8 @@ class OpenTelemetryServiceProvider extends ServiceProvider
                 $attributesFactory = new \OpenTelemetry\SDK\Common\Attribute\AttributesFactory();
 
                 $resource = ResourceInfo::create(Attributes::create([
-                    'service.name' => config('app.name', 'laravel-app'),
-                    'deployment.environment' => config('app.env', 'local'),
+                    'service.name' => config('opentelemetry.service_name'),
+                    'deployment.environment' => config('app.env'),
                 ]));
 
                 return new MeterProvider(
@@ -131,7 +131,7 @@ class OpenTelemetryServiceProvider extends ServiceProvider
             return self::$isReachable;
         }
 
-        $endpoint = env('OTEL_EXPORTER_OTLP_ENDPOINT', config('opentelemetry.endpoint'));
+        $endpoint = config('opentelemetry.endpoint');
         if (! filter_var($endpoint, FILTER_VALIDATE_URL)) {
             Log::error('Invalid OTEL endpoint', ['endpoint' => $endpoint]);
             return self::$isReachable = false;
