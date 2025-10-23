@@ -18,7 +18,6 @@ class MetricsService
         $this->meter = [];
 
         if (!app()->bound('metrics')) {
-            Log::warning('OpenTelemetry meter not bound.');
             return;
         }
 
@@ -102,6 +101,7 @@ class MetricsService
             'http.route' => $request->path(),
             'net.host.name' => gethostname(),
             'http.status_code' => $status,
+            'service.name' => config('opentelemetry.service_name')
         ];
 
         try {
@@ -137,25 +137,43 @@ class MetricsService
     {
         $cpu = $this->getCpuStats();
         foreach ($cpu as $state => $value) {
-            $this->metrics['system_cpu_time_seconds_total']->add($value, ['state' => $state, 'host' => gethostname()]);
+            $this->metrics['system_cpu_time_seconds_total']->add($value, 
+            [
+                'state' => $state, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+            ]);
         }
 
         $mem = $this->getMemoryInfo();
         foreach ($mem as $key => $value) {
-            $this->metrics['system_memory_usage_bytes']->record($value, ['type' => $key, 'host' => gethostname()]);
+            $this->metrics['system_memory_usage_bytes']->record($value, 
+            [
+                'type' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+            ]);
         }
 
-        $path = config('opentelemetry.disk_path', '/');
+        $path = config('opentelemetry.disk_path');
         $total = @disk_total_space($path);
         $free  = @disk_free_space($path);
         $used = $total - $free;
 
-        $this->metrics['system_disk_total_bytes']->record($total, ['host' => gethostname()]);
-        $this->metrics['system_disk_free_bytes']->record($free, ['host' => gethostname()]);
-        $this->metrics['system_disk_usage_bytes']->record($used, ['host' => gethostname()]);
+        $this->metrics['system_disk_total_bytes']->record($total, 
+        [
+            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+        ]);
+        $this->metrics['system_disk_free_bytes']->record($free, 
+        [
+            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+        ]);
+        $this->metrics['system_disk_usage_bytes']->record($used, 
+        [
+            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+        ]);
 
         $uptime = time() - ($_SERVER['REQUEST_TIME_FLOAT'] ?? time());
-        $this->metrics['application_uptime_seconds']->record($uptime, ['host' => gethostname()]);
+        $this->metrics['application_uptime_seconds']->record($uptime, 
+        [
+            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+        ]);
     }
 
     /**
@@ -171,7 +189,9 @@ class MetricsService
         $this->metrics['db_query_latency_seconds']->record($execTime, $labels);
 
         if (property_exists($query, 'error') && $query->error) {
-            $this->metrics['db_error_total']->add(1, ['error' => $query->error, 'host' => gethostname()]);
+            $this->metrics['db_error_total']->add(1, [
+                'error' => $query->error, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+            ]);
         }
     }
 
@@ -181,8 +201,7 @@ class MetricsService
     public function recordErrorMetrics(\Throwable $e): void
     {
         $this->metrics['error_total']->add(1, [
-            'message' => substr($e->getMessage(), 0, 120),
-            'host' => gethostname(),
+            'message' => substr($e->getMessage(), 0, 120), 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
         ]);
     }
 
@@ -207,20 +226,29 @@ class MetricsService
                 {
                     $value = $this->store->get($key);
                     $metric = $value ? 'cache_hit_total' : 'cache_miss_total';
-                    $this->metrics[$metric]->add(1, ['key' => $key, 'host' => gethostname()]);
+                    $this->metrics[$metric]->add(1, 
+                    [
+                        'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+                    ]);
                     return $value;
                 }
 
                 public function put($key, $value, $ttl = null): void
                 {
                     $this->store->put($key, $value, $ttl);
-                    $this->metrics['cache_store_total']->add(1, ['key' => $key, 'host' => gethostname()]);
+                    $this->metrics['cache_store_total']->add(1, 
+                    [
+                        'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+                    ]);
                 }
 
                 public function forget($key): void
                 {
                     $this->store->forget($key);
-                    $this->metrics['cache_delete_total']->add(1, ['key' => $key, 'host' => gethostname()]);
+                    $this->metrics['cache_delete_total']->add(1, 
+                    [
+                        'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+                    ]);
                 }
 
                 public function __call($method, $params)
@@ -239,7 +267,7 @@ class MetricsService
     private function getCpuStats(): array
     {
         $states = ['user', 'nice', 'system', 'idle', 'iowait', 'irq', 'softirq', 'steal'];
-        $path = config('opentelemetry.cpu_path', '/proc/stat');
+        $path = config('opentelemetry.cpu_path');
         if (!file_exists($path)) return [];
 
         $lines = file($path);
@@ -253,7 +281,7 @@ class MetricsService
 
     private function getMemoryInfo(): array
     {
-        $path = config('opentelemetry.memory_path', '/proc/meminfo');
+        $path = config('opentelemetry.memory_path');
         if (!file_exists($path)) return [];
 
         $lines = file($path);
@@ -265,6 +293,7 @@ class MetricsService
         }
 
         return [
+            'total' => $raw['memtotal'] ?? 0,
             'free' => $raw['memfree'] ?? 0,
             'cached' => $raw['cached'] ?? 0,
             'buffers' => $raw['buffers'] ?? 0,
@@ -281,7 +310,7 @@ public function recordNetworkMetrics(): void
         return;
     }
 
-    $networkPath = config('opentelemetry.network_path', '/proc/net/dev');
+    $networkPath = config('opentelemetry.network_path');
     if (!file_exists($networkPath) || !is_readable($networkPath)) {
         return;
     }
@@ -324,7 +353,7 @@ public function recordNetworkMetrics(): void
     }
 
     // Active connections (TCP states)
-    $connectionPath = config('opentelemetry.connection_path', '/proc/net/tcp');
+    $connectionPath = config('opentelemetry.connection_path');
     if (file_exists($connectionPath)) {
         $stateMap = [
             '01' => 'ESTABLISHED', '02' => 'SYN_SENT', '03' => 'SYN_RECV',
@@ -345,8 +374,7 @@ public function recordNetworkMetrics(): void
 
         foreach ($counts as $state => $count) {
             $this->metrics['active_network_connections']->record($count, [
-                'state' => $state,
-                'host' => gethostname(),
+                'state' => $state, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
             ]);
         }
     }
