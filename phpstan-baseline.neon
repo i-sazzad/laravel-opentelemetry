@@ -1,0 +1,37 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Variable \$errstr on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.variable
+			count: 1
+			path: src/Logger/OtelLoggerFactory.php
+
+		-
+			message: '#^Call to function method_exists\(\) with Laratel\\Opentelemetry\\Helpers\\Helper and ''flushMetrics'' will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: src/Middleware/OpenTelemetryMetricsMiddleware.php
+
+		-
+			message: '#^Constant LARAVEL_START not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: src/Middleware/OpenTelemetryTraceMiddleware.php
+
+		-
+			message: '#^Expression on left side of \?\? is not nullable\.$#'
+			identifier: nullCoalesce.expr
+			count: 1
+			path: src/Services/MetricsService.php
+
+		-
+			message: '#^Constant LARAVEL_START not found\.$#'
+			identifier: constant.notFound
+			count: 1
+			path: src/Services/TraceService.php
+
+		-
+			message: '#^Parameter \#2 \$default of method Illuminate\\Http\\Request\:\:header\(\) expects array\|string\|null, int given\.$#'
+			identifier: argument.type
+			count: 1
+			path: src/Services/TraceService.php
