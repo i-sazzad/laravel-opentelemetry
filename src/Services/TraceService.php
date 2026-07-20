@@ -47,7 +47,8 @@ class TraceService
             $endTime = $clock->now();
             $startTime = $endTime - (int) ($query->time * 1_000_000);
 
-            $span = $this->tracer->spanBuilder($query->sql)
+            $operation = strtolower(strtok(ltrim($query->sql), " \t(")) ?: 'query';
+            $span = $this->tracer->spanBuilder($operation)
                 ->setStartTimestamp($startTime)
                 ->setAttribute('db.system', $query->connection->getDriverName())
                 ->setAttribute('db.name', $query->connection->getDatabaseName())
@@ -62,27 +63,33 @@ class TraceService
     }
 
     /**
-     * Set standard HTTP span attributes.
+     * Set HTTP span attributes following OTel semantic conventions.
      */
-    public function setSpanAttributes(SpanInterface $span, Request $request, $response): void
+    public function setSpanAttributes(SpanInterface $span, Request $request, $response, float $startTime): void
     {
         $span->setAttributes([
-            'http.method' => $request->method(),
-            'http.url' => $request->fullUrl(),
-            'http.route' => $this->getRouteName($request),
-            'http.status_code' => $response->getStatusCode(),
-            'http.client_ip' => $request->ip(),
-            'http.user_agent' => $request->header('User-Agent', 'unknown'),
-            'http.request_content_length' => (int) $request->header('Content-Length', 0),
-            'http.response_content_length' => strlen($response->getContent() ?? ''),
-            'http.response_time_ms' => (microtime(true) - LARAVEL_START) * 1000,
+            'http.request.method' => $request->method(),
+            'url.full' => $request->fullUrl(),
+            // Semconv http.route is the route TEMPLATE (matches the metrics
+            // labels), never the route name or the raw path.
+            'http.route' => $request->route()?->uri() ?? 'unknown',
+            'http.response.status_code' => $response->getStatusCode(),
+            'client.address' => $request->ip(),
+            'user_agent.original' => $request->header('User-Agent', 'unknown'),
+            'http.request.body.size' => (int) $request->header('Content-Length', 0),
+            'http.response.body.size' => strlen($response->getContent() ?: ''),
+            'http.server.duration_ms' => (microtime(true) - $startTime) * 1000,
         ]);
 
         if ($request->user()) {
-            $span->setAttribute('enduser.id', $request->user()->id);
+            $span->setAttribute('enduser.id', (string) $request->user()->id);
         }
 
-        $span->setStatus(StatusCode::STATUS_OK);
+        // Ok is final per the OTel spec — setting it here for an error
+        // response would make the middleware's later Error status a no-op.
+        if ($response->getStatusCode() < 400) {
+            $span->setStatus(StatusCode::STATUS_OK);
+        }
     }
 
     /**
@@ -115,15 +122,5 @@ class TraceService
         }
 
         return (bool) preg_match($this->exclusionPattern, $sql);
-    }
-
-    /**
-     * Get route name or URI.
-     */
-    private function getRouteName(Request $request): string
-    {
-        $route = $request->route();
-
-        return $route ? ($route->getName() ?? $route->uri()) : 'unknown';
     }
 }

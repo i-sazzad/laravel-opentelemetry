@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Laratel\Opentelemetry\Helpers\Helper;
 use Laratel\Opentelemetry\Services\TraceService;
+use OpenTelemetry\API\Trace\Propagation\TraceContextPropagator;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\API\Trace\StatusCode;
 use Throwable;
@@ -26,20 +27,21 @@ readonly class OpenTelemetryTraceMiddleware
     {
         $tracer = $this->traceService->getTracer();
 
-        // Skip if tracer not available or excluded route
         if (! $tracer || $this->helper->shouldExclude($request->path())) {
             return $next($request);
         }
 
-        // Ensure DB query tracing is active
         $this->traceService->dbQueryTrace();
 
-        $route = $request->route();
-        $spanName = $request->method().' '.($route ? ($route->getName() ?? $route->uri()) : $request->path());
+        // Continue a distributed trace if the caller sent W3C trace context.
+        $parent = TraceContextPropagator::getInstance()->extract($request->headers->all());
+
+        $startTime = defined('LARAVEL_START') ? LARAVEL_START : microtime(true);
 
         $span = $tracer
-            ->spanBuilder($spanName)
-            ->setStartTimestamp((int) (LARAVEL_START * 1_000_000_000))
+            ->spanBuilder($request->method().' '.$request->path())
+            ->setParent($parent)
+            ->setStartTimestamp((int) ($startTime * 1_000_000_000))
             ->setSpanKind(SpanKind::KIND_SERVER)
             ->startSpan();
 
@@ -48,36 +50,33 @@ readonly class OpenTelemetryTraceMiddleware
         try {
             $response = $next($request);
 
-            // Add standard HTTP attributes
-            $this->traceService->setSpanAttributes($span, $request, $response);
+            // Routing happens inside $next for global middleware; rename the
+            // span to the low-cardinality route template now that it's known.
+            $route = $request->route();
+            if ($route) {
+                $span->updateName($request->method().' /'.ltrim($route->uri(), '/'));
+                $span->setAttributes([
+                    'laravel.route.name' => $route->getName(),
+                    'laravel.controller.action' => $route->getActionName(),
+                ]);
+            }
 
-            // Record HTTP error status if response failed
+            $this->traceService->setSpanAttributes($span, $request, $response, $startTime);
+
             $status = $response->getStatusCode();
             if ($status >= 400) {
                 $span->setStatus(StatusCode::STATUS_ERROR, "HTTP $status");
             }
 
-            // Include trace identifiers in the response (optional but useful)
             $context = $span->getContext();
             $response->headers->set('trace-id', $context->getTraceId());
             $response->headers->set('span-id', $context->getSpanId());
 
-            // Route-level info
-            if ($route) {
-                $span->setAttributes([
-                    'http.route.name' => $route->getName(),
-                    'http.route.uri' => $route->uri(),
-                    'controller.action' => $route->getActionName(),
-                ]);
-            }
-
             return $response;
         } catch (Throwable $e) {
-            // Record exception
             $this->traceService->handleException($span, $e);
             throw $e;
         } finally {
-            // Close and detach span
             $scope->detach();
             $span->end();
         }
