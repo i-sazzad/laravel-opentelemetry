@@ -20,8 +20,8 @@
 
 ## Requirements
 
-- PHP >= 8.0
-- Laravel >= 9.x
+- PHP >= 8.2
+- Laravel >= 10.x
 - Dependencies:
     - `open-telemetry/exporter-otlp` ^1.1
     - `open-telemetry/sdk` ^1.1
@@ -101,7 +101,13 @@ The `config/opentelemetry.php` file allows you to configure:
   Define routes to exclude from tracing or metrics collection.
 
 - **Excluded Queries**:
-  Specify database queries that should not be traced.
+  Specify plain, case-insensitive substrings; any query containing one is not traced.
+
+- **Reachability Check**:
+  `enable_reachability_check` (default `true`) probes the collector on boot and disables telemetry if it is down; `reachability_timeout` controls the probe timeout in seconds.
+
+- **System Metrics**:
+  `system_metrics_enabled` (default `true`) toggles CPU/memory/disk/network collection, which reads `/proc` and only works on Linux.
 
 ---
 
@@ -127,10 +133,13 @@ To configure OpenTelemetry via environment variables, include the following in y
 
 ```env
 OTEL_SERVICE_NAME=your_service_name
-OTEL_TRACES_SAMPLER=always_on
+OTEL_SERVICE_NAMESPACE=your_namespace
+OTEL_SERVICE_VERSION=1.0.0
 OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 OTEL_EXPORTER_OTLP_ENDPOINT=http://your_otel_collector_endpoint:port
-OTEL_RESOURCE_ATTRIBUTES=deployment.environment=production,service.namespace=service_namespace,service.version=1.0,service.instance.id=instance_id
+OTEL_ENABLE_REACHABILITY_CHECK=true
+OTEL_REACHABILITY_TIMEOUT=0.1
+OTEL_SYSTEM_METRICS_ENABLED=true
 ```
 
 ---
@@ -176,6 +185,8 @@ Route::middleware(['opentelemetry.metrics', 'opentelemetry.trace'])->group(funct
 });
 ```
 
+> Since v2.0 the aliases `opentelemetry.trace` and `opentelemetry.metrics` are registered automatically by the service provider — you can use them in routes without touching the Kernel. Global registration in the Kernel still works and is recommended for tracing every request.
+
 ---
 
 ### Logging
@@ -213,13 +224,14 @@ Use the `TraceService` to create custom traces:
 ```php
 use Laratel\Opentelemetry\Services\TraceService;
 
-$traceService = new TraceService();
-$tracer = $traceService->getCustomTracer();
+$tracer = app(TraceService::class)->getTracer();
 
-$span = $tracer->spanBuilder('custom-operation')->startSpan();
-$span->setAttribute('custom.attribute', 'value');
-// Perform some operation
-$span->end();
+if ($tracer) {
+    $span = $tracer->spanBuilder('custom-operation')->startSpan();
+    $span->setAttribute('custom.attribute', 'value');
+    // Perform some operation
+    $span->end();
+}
 ```
 
 ---
@@ -241,20 +253,16 @@ $span->end();
 - laratel_system_disk_total_bytes  
 - laratel_system_disk_free_bytes  
 - laratel_system_disk_usage_bytes  
-- laratel_application_uptime_seconds  
 
 #### Network Metrics
 - laratel_system_network_io_bytes_total  
 - laratel_system_network_dropped_total  
 - laratel_system_network_errors_total  
-- laratel_network_inbound_bytes  
-- laratel_network_outbound_bytes  
 - laratel_active_network_connections  
 
 #### Database Metrics
 - laratel_db_query_total  
 - laratel_db_query_latency_seconds  
-- laratel_db_error_total  
 
 #### Cache Metrics
 - laratel_cache_hit_total  

@@ -4,6 +4,7 @@ namespace Laratel\Opentelemetry\Logger;
 
 use Exception;
 use Illuminate\Support\Facades\Log;
+use Laratel\Opentelemetry\Support\OtelResource;
 use Monolog\Handler\NullHandler;
 use Monolog\Logger;
 use OpenTelemetry\API\Common\Time\SystemClock;
@@ -14,7 +15,6 @@ use OpenTelemetry\SDK\Common\Attribute\AttributesFactory;
 use OpenTelemetry\SDK\Common\Instrumentation\InstrumentationScopeFactory;
 use OpenTelemetry\SDK\Logs\LoggerProvider;
 use OpenTelemetry\SDK\Logs\Processor\BatchLogRecordProcessor;
-use Laratel\Opentelemetry\Support\OtelResource;
 
 class OtelLoggerFactory
 {

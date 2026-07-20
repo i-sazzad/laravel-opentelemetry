@@ -5,6 +5,10 @@ namespace Laratel\Opentelemetry\Providers;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
+use Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware;
+use Laratel\Opentelemetry\Middleware\OpenTelemetryTraceMiddleware;
+use Laratel\Opentelemetry\Services\MetricsService;
+use Laratel\Opentelemetry\Services\TraceService;
 use Laratel\Opentelemetry\Support\OtelResource;
 use OpenTelemetry\API\Metrics\MeterInterface;
 use OpenTelemetry\API\Metrics\Noop\NoopMeterProvider;
@@ -28,8 +32,8 @@ class OpenTelemetryServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/opentelemetry.php', 'opentelemetry');
 
-        $this->app->singleton(\Laratel\Opentelemetry\Services\MetricsService::class);
-        $this->app->singleton(\Laratel\Opentelemetry\Services\TraceService::class);
+        $this->app->singleton(MetricsService::class);
+        $this->app->singleton(TraceService::class);
 
         if (! $this->isOpenTelemetryServerReachable()) {
             return;
@@ -151,7 +155,7 @@ class OpenTelemetryServiceProvider extends ServiceProvider
         ], 'opentelemetry-config');
 
         $router = $this->app['router'];
-        $router->aliasMiddleware('opentelemetry.trace', \Laratel\Opentelemetry\Middleware\OpenTelemetryTraceMiddleware::class);
-        $router->aliasMiddleware('opentelemetry.metrics', \Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware::class);
+        $router->aliasMiddleware('opentelemetry.trace', OpenTelemetryTraceMiddleware::class);
+        $router->aliasMiddleware('opentelemetry.metrics', OpenTelemetryMetricsMiddleware::class);
     }
 }
