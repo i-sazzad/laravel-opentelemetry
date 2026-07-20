@@ -5,26 +5,19 @@ namespace Laratel\Opentelemetry\Providers;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
-use OpenTelemetry\API\Common\Time\SystemClock;
+use Laratel\Opentelemetry\Support\OtelResource;
 use OpenTelemetry\API\Metrics\MeterInterface;
+use OpenTelemetry\API\Metrics\Noop\NoopMeterProvider;
+use OpenTelemetry\API\Trace\NoopTracerProvider;
 use OpenTelemetry\API\Trace\TracerInterface;
 use OpenTelemetry\Contrib\Grpc\GrpcTransportFactory;
 use OpenTelemetry\Contrib\Otlp\MetricExporter;
 use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
-use OpenTelemetry\SDK\Common\Attribute\Attributes;
-use OpenTelemetry\SDK\Common\Attribute\AttributesFactory;
-use OpenTelemetry\SDK\Common\Instrumentation\InstrumentationScopeFactory;
 use OpenTelemetry\SDK\Metrics\MeterProvider;
 use OpenTelemetry\SDK\Metrics\MetricReader\ExportingReader;
-use OpenTelemetry\API\Metrics\Noop\NoopMeterProvider;
-use OpenTelemetry\SDK\Metrics\StalenessHandler\ImmediateStalenessHandlerFactory;
-use OpenTelemetry\SDK\Metrics\View\CriteriaViewRegistry;
-use OpenTelemetry\SDK\Resource\ResourceInfo;
-use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
-use OpenTelemetry\API\Trace\NoopTracerProvider;
 use OpenTelemetry\SDK\Trace\Sampler\AlwaysOnSampler;
-use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
+use OpenTelemetry\SDK\Trace\SpanProcessor\BatchSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
 
 class OpenTelemetryServiceProvider extends ServiceProvider
@@ -66,11 +59,11 @@ class OpenTelemetryServiceProvider extends ServiceProvider
 
                 $spanExporter = new SpanExporter($transport);
 
-                return new TracerProvider(
-                    new SimpleSpanProcessor($spanExporter),
-                    new AlwaysOnSampler,
-                    ResourceInfoFactory::defaultResource()
-                );
+                return TracerProvider::builder()
+                    ->addSpanProcessor(BatchSpanProcessor::builder($spanExporter)->build())
+                    ->setResource(OtelResource::build())
+                    ->setSampler(new AlwaysOnSampler)
+                    ->build();
             } catch (\Throwable $e) {
                 Log::error('OpenTelemetry TracerProvider setup failed', ['error' => $e->getMessage()]);
 
@@ -100,24 +93,11 @@ class OpenTelemetryServiceProvider extends ServiceProvider
                 );
 
                 $metricExporter = new MetricExporter($transport);
-                $attributesFactory = new AttributesFactory;
 
-                $resource = ResourceInfo::create(Attributes::create([
-                    'service.name' => config('opentelemetry.service_name'),
-                    'deployment.environment' => config('app.env'),
-                ]));
-
-                return new MeterProvider(
-                    null,
-                    $resource,
-                    new SystemClock,
-                    $attributesFactory,
-                    new InstrumentationScopeFactory($attributesFactory),
-                    [new ExportingReader($metricExporter)],
-                    new CriteriaViewRegistry,
-                    null,
-                    new ImmediateStalenessHandlerFactory
-                );
+                return MeterProvider::builder()
+                    ->setResource(OtelResource::build())
+                    ->addReader(new ExportingReader($metricExporter))
+                    ->build();
             } catch (\Throwable $e) {
                 Log::error('OpenTelemetry MeterProvider setup failed', ['error' => $e->getMessage()]);
 

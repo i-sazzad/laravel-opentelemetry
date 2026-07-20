@@ -14,7 +14,7 @@ use OpenTelemetry\SDK\Common\Attribute\AttributesFactory;
 use OpenTelemetry\SDK\Common\Instrumentation\InstrumentationScopeFactory;
 use OpenTelemetry\SDK\Logs\LoggerProvider;
 use OpenTelemetry\SDK\Logs\Processor\BatchLogRecordProcessor;
-use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
+use Laratel\Opentelemetry\Support\OtelResource;
 
 class OtelLoggerFactory
 {
@@ -72,7 +72,7 @@ class OtelLoggerFactory
         self::$loggerProvider = new LoggerProvider(
             $logProcessor,
             new InstrumentationScopeFactory($attributesFactory),
-            ResourceInfoFactory::defaultResource()
+            OtelResource::build()
         );
 
         // Register a shutdown function to ensure buffered logs are sent.
