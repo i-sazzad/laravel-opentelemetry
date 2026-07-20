@@ -24,7 +24,7 @@ readonly class OtelLogger implements LoggerInterface
         $logRecord = (new LogRecord($message))
             ->setTimestamp((int) (microtime(true) * 1_000_000_000))
             ->setObservedTimestamp((int) (microtime(true) * 1_000_000_000))
-            ->setSeverityNumber($this->mapSeverityNumber($level))
+            ->setSeverityNumber(self::mapSeverityNumber($level))
             ->setSeverityText(strtoupper($level))
             ->setAttributes($context)
             ->setContext(Context::getCurrent());
@@ -39,18 +39,22 @@ readonly class OtelLogger implements LoggerInterface
         $this->loggerProvider->getLogger('otel-logger', '1.0.0')->emit($logRecord);
     }
 
-    private function mapSeverityNumber(string $level): int
+    /**
+     * Map PSR-3 levels to OpenTelemetry severity numbers.
+     * Spec: TRACE=1-4, DEBUG=5-8, INFO=9-12, WARN=13-16, ERROR=17-20, FATAL=21-24.
+     */
+    public static function mapSeverityNumber(string $level): int
     {
-        // Mapping PSR-3 log levels to OpenTelemetry severity numbers.
         return match ($level) {
-            LogLevel::EMERGENCY, LogLevel::ALERT => 1, // FATAL
-            LogLevel::CRITICAL => 3,  // ERROR
-            LogLevel::ERROR => 4,     // ERROR
-            LogLevel::WARNING => 5,   // WARN
-            LogLevel::NOTICE => 6,    // INFO
-            LogLevel::INFO => 7,      // INFO
-            LogLevel::DEBUG => 8,     // DEBUG
-            default => 8,             // Default to DEBUG
+            LogLevel::DEBUG => 5,
+            LogLevel::INFO => 9,
+            LogLevel::NOTICE => 10,
+            LogLevel::WARNING => 13,
+            LogLevel::ERROR => 17,
+            LogLevel::CRITICAL => 18,
+            LogLevel::ALERT => 21,
+            LogLevel::EMERGENCY => 22,
+            default => 9,
         };
     }
 
