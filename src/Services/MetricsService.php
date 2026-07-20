@@ -2,6 +2,7 @@
 
 namespace Laratel\Opentelemetry\Services;
 
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use OpenTelemetry\API\Metrics\MeterInterface;
@@ -140,29 +141,29 @@ class MetricsService
     }
 
     /**
-     * Record database query metrics
+     * Record database query metrics with bounded labels.
      */
-    public function recordDbMetrics($query): void
+    public function recordDbMetrics(QueryExecuted $query): void
     {
-        $execTime = ($query->time ?? 0) / 1000;
-        $sql = substr($query->sql ?? 'unknown', 0, 100);
+        $operation = strtolower(strtok(ltrim($query->sql), " \t(")) ?: 'other';
+
         $labels = [
-            'query' => $sql,
-            'host' => gethostname(),
-            'service.name' => config('opentelemetry.service_name'),
+            'db.operation' => $operation,
+            'db.connection' => $query->connectionName ?? 'default',
         ];
 
         $this->metrics['db_query_total']->add(1, $labels);
-        $this->metrics['db_query_latency_seconds']->record($execTime, $labels);
+        $this->metrics['db_query_latency_seconds']->record(($query->time ?? 0) / 1000, $labels);
     }
 
     /**
-     * Record generic error metrics
+     * Record generic error metrics. Never label with the message: it is
+     * unbounded and may contain sensitive data.
      */
     public function recordErrorMetrics(\Throwable $e): void
     {
         $this->metrics['error_total']->add(1, [
-            'message' => substr($e->getMessage(), 0, 120), 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+            'exception.type' => get_class($e),
         ]);
     }
 

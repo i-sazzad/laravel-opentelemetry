@@ -2,6 +2,8 @@
 
 namespace Laratel\Opentelemetry\Tests\Unit;
 
+use Illuminate\Database\Connection;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 use Laratel\Opentelemetry\Helpers\Helper;
 use Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware;
@@ -96,6 +98,37 @@ class MetricsServiceTest extends TestCase
 
         $request = Request::create('/api/users', 'GET');
         $service->recordHttpMetrics($request, new Response('down', 503), microtime(true));
+    }
+
+    public function test_db_metrics_label_operation_not_sql_text(): void
+    {
+        $service = $this->makeService();
+
+        $counter = $this->createMock(CounterInterface::class);
+        $counter->expects($this->once())->method('add')->with(1, [
+            'db.operation' => 'select',
+            'db.connection' => 'testing',
+        ]);
+        $service->metrics['db_query_total'] = $counter;
+
+        $connection = $this->createMock(Connection::class);
+        $connection->method('getName')->willReturn('testing');
+        $query = new QueryExecuted('SELECT * FROM users WHERE email = ?', ['a@b.c'], 12.5, $connection);
+
+        $service->recordDbMetrics($query);
+    }
+
+    public function test_error_metrics_label_class_not_message(): void
+    {
+        $service = $this->makeService();
+
+        $counter = $this->createMock(CounterInterface::class);
+        $counter->expects($this->once())->method('add')->with(1, [
+            'exception.type' => \RuntimeException::class,
+        ]);
+        $service->metrics['error_total'] = $counter;
+
+        $service->recordErrorMetrics(new \RuntimeException('secret user data in message'));
     }
 
     public function test_middleware_passes_through_without_meter(): void
