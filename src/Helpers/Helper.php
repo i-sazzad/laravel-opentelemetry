@@ -37,11 +37,13 @@ class Helper
 
         try {
             $result = $meterProvider->forceFlush();
+
             return $result === null ? true : (bool) $result;
         } catch (\Throwable $e) {
             if (config('app.debug')) {
-                Log::warning('[OTEL] Metric flush failed: ' . $e->getMessage());
+                Log::warning('[OTEL] Metric flush failed: '.$e->getMessage());
             }
+
             return false;
         }
     }

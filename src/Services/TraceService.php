@@ -7,14 +7,16 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use OpenTelemetry\API\Common\Time\Clock;
 use OpenTelemetry\API\Trace\SpanInterface;
-use OpenTelemetry\API\Trace\TracerInterface;
 use OpenTelemetry\API\Trace\StatusCode;
+use OpenTelemetry\API\Trace\TracerInterface;
 use Throwable;
 
 class TraceService
 {
     private ?TracerInterface $tracer;
+
     private static bool $listenerRegistered = false;
+
     private static ?string $exclusionPattern = null;
 
     public function __construct()
@@ -107,8 +109,8 @@ class TraceService
         }
 
         if (self::$exclusionPattern === null) {
-            $patterns = array_map(fn($q) => preg_quote($q, '/'), $excludedQueries);
-            self::$exclusionPattern = '/(' . implode('|', $patterns) . ')/i';
+            $patterns = array_map(fn ($q) => preg_quote($q, '/'), $excludedQueries);
+            self::$exclusionPattern = '/('.implode('|', $patterns).')/i';
         }
 
         return (bool) preg_match(self::$exclusionPattern, $sql);
@@ -120,6 +122,7 @@ class TraceService
     private function getRouteName(Request $request): string
     {
         $route = $request->route();
+
         return $route ? ($route->getName() ?? $route->uri()) : 'unknown';
     }
 }

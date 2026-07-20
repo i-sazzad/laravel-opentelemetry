@@ -10,6 +10,7 @@ use Symfony\Component\HttpFoundation\Response;
 class MetricsService
 {
     protected mixed $meter;
+
     public array $metrics;
 
     public function __construct()
@@ -17,7 +18,7 @@ class MetricsService
         $this->metrics = [];
         $this->meter = [];
 
-        if (!app()->bound('metrics')) {
+        if (! app()->bound('metrics')) {
             return;
         }
 
@@ -101,7 +102,7 @@ class MetricsService
             'http.route' => $request->path(),
             'net.host.name' => gethostname(),
             'http.status_code' => $status,
-            'service.name' => config('opentelemetry.service_name')
+            'service.name' => config('opentelemetry.service_name'),
         ];
 
         try {
@@ -137,43 +138,43 @@ class MetricsService
     {
         $cpu = $this->getCpuStats();
         foreach ($cpu as $state => $value) {
-            $this->metrics['system_cpu_time_seconds_total']->add($value, 
-            [
-                'state' => $state, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
-            ]);
+            $this->metrics['system_cpu_time_seconds_total']->add($value,
+                [
+                    'state' => $state, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+                ]);
         }
 
         $mem = $this->getMemoryInfo();
         foreach ($mem as $key => $value) {
-            $this->metrics['system_memory_usage_bytes']->record($value, 
-            [
-                'type' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
-            ]);
+            $this->metrics['system_memory_usage_bytes']->record($value,
+                [
+                    'type' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+                ]);
         }
 
         $path = config('opentelemetry.disk_path');
         $total = @disk_total_space($path);
-        $free  = @disk_free_space($path);
+        $free = @disk_free_space($path);
         $used = $total - $free;
 
-        $this->metrics['system_disk_total_bytes']->record($total, 
-        [
-            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
-        ]);
-        $this->metrics['system_disk_free_bytes']->record($free, 
-        [
-            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
-        ]);
-        $this->metrics['system_disk_usage_bytes']->record($used, 
-        [
-            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
-        ]);
+        $this->metrics['system_disk_total_bytes']->record($total,
+            [
+                'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+            ]);
+        $this->metrics['system_disk_free_bytes']->record($free,
+            [
+                'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+            ]);
+        $this->metrics['system_disk_usage_bytes']->record($used,
+            [
+                'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+            ]);
 
         $uptime = time() - ($_SERVER['REQUEST_TIME_FLOAT'] ?? time());
-        $this->metrics['application_uptime_seconds']->record($uptime, 
-        [
-            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
-        ]);
+        $this->metrics['application_uptime_seconds']->record($uptime,
+            [
+                'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+            ]);
     }
 
     /**
@@ -184,9 +185,9 @@ class MetricsService
         $execTime = ($query->time ?? 0) / 1000;
         $sql = substr($query->sql ?? 'unknown', 0, 100);
         $labels = [
-            'query' => $sql, 
-            'host' => gethostname(), 
-            'service.name' => config('opentelemetry.service_name')
+            'query' => $sql,
+            'host' => gethostname(),
+            'service.name' => config('opentelemetry.service_name'),
         ];
 
         $this->metrics['db_query_total']->add(1, $labels);
@@ -194,7 +195,7 @@ class MetricsService
 
         if (property_exists($query, 'error') && $query->error) {
             $this->metrics['db_error_total']->add(1, [
-                'error' => $query->error, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+                'error' => $query->error, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
             ]);
         }
     }
@@ -205,7 +206,7 @@ class MetricsService
     public function recordErrorMetrics(\Throwable $e): void
     {
         $this->metrics['error_total']->add(1, [
-            'message' => substr($e->getMessage(), 0, 120), 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
+            'message' => substr($e->getMessage(), 0, 120), 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
         ]);
     }
 
@@ -216,8 +217,11 @@ class MetricsService
     {
         Cache::extend('otel', function ($app, $config) {
             $store = Cache::driver($config['driver']);
-            return new class($store, $this->metrics) {
+
+            return new class($store, $this->metrics)
+            {
                 protected $store;
+
                 protected $metrics;
 
                 public function __construct($store, $metrics)
@@ -230,29 +234,30 @@ class MetricsService
                 {
                     $value = $this->store->get($key);
                     $metric = $value ? 'cache_hit_total' : 'cache_miss_total';
-                    $this->metrics[$metric]->add(1, 
-                    [
-                        'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
-                    ]);
+                    $this->metrics[$metric]->add(1,
+                        [
+                            'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+                        ]);
+
                     return $value;
                 }
 
                 public function put($key, $value, $ttl = null): void
                 {
                     $this->store->put($key, $value, $ttl);
-                    $this->metrics['cache_store_total']->add(1, 
-                    [
-                        'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
-                    ]);
+                    $this->metrics['cache_store_total']->add(1,
+                        [
+                            'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+                        ]);
                 }
 
                 public function forget($key): void
                 {
                     $this->store->forget($key);
-                    $this->metrics['cache_delete_total']->add(1, 
-                    [
-                        'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
-                    ]);
+                    $this->metrics['cache_delete_total']->add(1,
+                        [
+                            'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+                        ]);
                 }
 
                 public function __call($method, $params)
@@ -272,7 +277,9 @@ class MetricsService
     {
         $states = ['user', 'nice', 'system', 'idle', 'iowait', 'irq', 'softirq', 'steal'];
         $path = config('opentelemetry.cpu_path');
-        if (!file_exists($path)) return [];
+        if (! file_exists($path)) {
+            return [];
+        }
 
         $lines = file($path);
         foreach ($lines as $line) {
@@ -280,19 +287,22 @@ class MetricsService
                 return array_combine($states, array_map('intval', array_slice($m, 1, 8)));
             }
         }
+
         return [];
     }
 
     private function getMemoryInfo(): array
     {
         $path = config('opentelemetry.memory_path');
-        if (!file_exists($path)) return [];
+        if (! file_exists($path)) {
+            return [];
+        }
 
         $lines = file($path);
         $raw = [];
         foreach ($lines as $line) {
             if (preg_match('/^(\w+):\s+(\d+)/', $line, $m)) {
-                $raw[strtolower($m[1])] = (int)$m[2] * 1024;
+                $raw[strtolower($m[1])] = (int) $m[2] * 1024;
             }
         }
 
@@ -306,85 +316,85 @@ class MetricsService
     }
 
     /**
- * Record network-level metrics (I/O, drops, errors, active connections)
- */
-public function recordNetworkMetrics(): void
-{
-    if (!isset($this->metrics['system_network_io_bytes_total'])) {
-        return;
-    }
-
-    $networkPath = config('opentelemetry.network_path');
-    if (!file_exists($networkPath) || !is_readable($networkPath)) {
-        return;
-    }
-
-    $lines = file($networkPath);
-
-    foreach ($lines as $line) {
-        // Matches typical /proc/net/dev line format:
-        // iface: bytes packets errs drop fifo frame compressed multicast bytes packets errs drop fifo colls carrier compressed
-        if (preg_match('/^\s*([\w]+):\s*(.+)$/', $line, $m)) {
-            $iface = $m[1];
-            $fields = preg_split('/\s+/', trim($m[2]));
-
-            // Safely extract fields with defaults
-            $rxBytes   = (int)($fields[0] ?? 0);
-            $rxPackets = (int)($fields[1] ?? 0);
-            $rxErrors  = (int)($fields[2] ?? 0);
-            $rxDropped = (int)($fields[3] ?? 0);
-
-            $txBytes   = (int)($fields[8] ?? 0);
-            $txPackets = (int)($fields[9] ?? 0);
-            $txErrors  = (int)($fields[10] ?? 0);
-            $txDropped = (int)($fields[11] ?? 0);
-
-            $labels = [
-                'interface' => $iface, 
-                'host' => gethostname(), 
-                'service.name' => config('opentelemetry.service_name')
-            ];
-
-            // Record counters and histograms
-            $this->metrics['system_network_io_bytes_total']->add($rxBytes + $txBytes, $labels);
-            $this->metrics['system_network_dropped_total']->add($rxDropped + $txDropped, $labels);
-            $this->metrics['system_network_errors_total']->add($rxErrors + $txErrors, $labels);
-
-            if (isset($this->metrics['network_inbound_bytes'])) {
-                $this->metrics['network_inbound_bytes']->record($rxBytes, $labels);
-            }
-
-            if (isset($this->metrics['network_outbound_bytes'])) {
-                $this->metrics['network_outbound_bytes']->record($txBytes, $labels);
-            }
+     * Record network-level metrics (I/O, drops, errors, active connections)
+     */
+    public function recordNetworkMetrics(): void
+    {
+        if (! isset($this->metrics['system_network_io_bytes_total'])) {
+            return;
         }
-    }
 
-    // Active connections (TCP states)
-    $connectionPath = config('opentelemetry.connection_path');
-    if (file_exists($connectionPath)) {
-        $stateMap = [
-            '01' => 'ESTABLISHED', '02' => 'SYN_SENT', '03' => 'SYN_RECV',
-            '04' => 'FIN_WAIT1', '05' => 'FIN_WAIT2', '06' => 'TIME_WAIT',
-            '07' => 'CLOSE', '08' => 'CLOSE_WAIT', '09' => 'LAST_ACK',
-            '0A' => 'LISTEN', '0B' => 'CLOSING',
-        ];
+        $networkPath = config('opentelemetry.network_path');
+        if (! file_exists($networkPath) || ! is_readable($networkPath)) {
+            return;
+        }
 
-        $counts = array_fill_keys(array_values($stateMap), 0);
-        foreach (file($connectionPath) as $line) {
-            if (preg_match('/\s+[0-9A-F]+:\s+[0-9A-F]+\s+[0-9A-F]+\s+([0-9A-F]{2})/', $line, $m)) {
-                $hex = strtoupper($m[1]);
-                if (isset($stateMap[$hex])) {
-                    $counts[$stateMap[$hex]]++;
+        $lines = file($networkPath);
+
+        foreach ($lines as $line) {
+            // Matches typical /proc/net/dev line format:
+            // iface: bytes packets errs drop fifo frame compressed multicast bytes packets errs drop fifo colls carrier compressed
+            if (preg_match('/^\s*([\w]+):\s*(.+)$/', $line, $m)) {
+                $iface = $m[1];
+                $fields = preg_split('/\s+/', trim($m[2]));
+
+                // Safely extract fields with defaults
+                $rxBytes = (int) ($fields[0] ?? 0);
+                $rxPackets = (int) ($fields[1] ?? 0);
+                $rxErrors = (int) ($fields[2] ?? 0);
+                $rxDropped = (int) ($fields[3] ?? 0);
+
+                $txBytes = (int) ($fields[8] ?? 0);
+                $txPackets = (int) ($fields[9] ?? 0);
+                $txErrors = (int) ($fields[10] ?? 0);
+                $txDropped = (int) ($fields[11] ?? 0);
+
+                $labels = [
+                    'interface' => $iface,
+                    'host' => gethostname(),
+                    'service.name' => config('opentelemetry.service_name'),
+                ];
+
+                // Record counters and histograms
+                $this->metrics['system_network_io_bytes_total']->add($rxBytes + $txBytes, $labels);
+                $this->metrics['system_network_dropped_total']->add($rxDropped + $txDropped, $labels);
+                $this->metrics['system_network_errors_total']->add($rxErrors + $txErrors, $labels);
+
+                if (isset($this->metrics['network_inbound_bytes'])) {
+                    $this->metrics['network_inbound_bytes']->record($rxBytes, $labels);
+                }
+
+                if (isset($this->metrics['network_outbound_bytes'])) {
+                    $this->metrics['network_outbound_bytes']->record($txBytes, $labels);
                 }
             }
         }
 
-        foreach ($counts as $state => $count) {
-            $this->metrics['active_network_connections']->record($count, [
-                'state' => $state, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name')
-            ]);
+        // Active connections (TCP states)
+        $connectionPath = config('opentelemetry.connection_path');
+        if (file_exists($connectionPath)) {
+            $stateMap = [
+                '01' => 'ESTABLISHED', '02' => 'SYN_SENT', '03' => 'SYN_RECV',
+                '04' => 'FIN_WAIT1', '05' => 'FIN_WAIT2', '06' => 'TIME_WAIT',
+                '07' => 'CLOSE', '08' => 'CLOSE_WAIT', '09' => 'LAST_ACK',
+                '0A' => 'LISTEN', '0B' => 'CLOSING',
+            ];
+
+            $counts = array_fill_keys(array_values($stateMap), 0);
+            foreach (file($connectionPath) as $line) {
+                if (preg_match('/\s+[0-9A-F]+:\s+[0-9A-F]+\s+[0-9A-F]+\s+([0-9A-F]{2})/', $line, $m)) {
+                    $hex = strtoupper($m[1]);
+                    if (isset($stateMap[$hex])) {
+                        $counts[$stateMap[$hex]]++;
+                    }
+                }
+            }
+
+            foreach ($counts as $state => $count) {
+                $this->metrics['active_network_connections']->record($count, [
+                    'state' => $state, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+                ]);
+            }
         }
     }
-}
 }

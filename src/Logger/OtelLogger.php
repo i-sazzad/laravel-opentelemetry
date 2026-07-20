@@ -10,9 +10,7 @@ use Psr\Log\LogLevel;
 
 readonly class OtelLogger implements LoggerInterface
 {
-    public function __construct(private LoggerProviderInterface $loggerProvider)
-    {
-    }
+    public function __construct(private LoggerProviderInterface $loggerProvider) {}
 
     public function log($level, $message, array $context = []): void
     {
@@ -24,8 +22,8 @@ readonly class OtelLogger implements LoggerInterface
         }
 
         $logRecord = (new LogRecord($message))
-            ->setTimestamp((int)(microtime(true) * 1_000_000_000))
-            ->setObservedTimestamp((int)(microtime(true) * 1_000_000_000))
+            ->setTimestamp((int) (microtime(true) * 1_000_000_000))
+            ->setObservedTimestamp((int) (microtime(true) * 1_000_000_000))
             ->setSeverityNumber($this->mapSeverityNumber($level))
             ->setSeverityText(strtoupper($level))
             ->setAttributes($context)

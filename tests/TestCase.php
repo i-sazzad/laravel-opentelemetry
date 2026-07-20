@@ -2,7 +2,11 @@
 
 namespace Laratel\Opentelemetry\Tests;
 
+use Laratel\Opentelemetry\Logger\OtelLoggerFactory;
+use Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware;
 use Laratel\Opentelemetry\Providers\OpenTelemetryServiceProvider;
+use Laratel\Opentelemetry\Services\MetricsService;
+use Laratel\Opentelemetry\Services\TraceService;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
@@ -16,16 +20,16 @@ abstract class TestCase extends Orchestra
      * @var array<array{class-string, string, mixed}>
      */
     private const STATIC_RESETS = [
-        [\Laratel\Opentelemetry\Providers\OpenTelemetryServiceProvider::class, 'isReachable', null],
-        [\Laratel\Opentelemetry\Logger\OtelLoggerFactory::class, 'isReachable', null],
-        [\Laratel\Opentelemetry\Logger\OtelLoggerFactory::class, 'loggerProvider', null],
-        [\Laratel\Opentelemetry\Services\TraceService::class, 'listenerRegistered', false],
-        [\Laratel\Opentelemetry\Services\TraceService::class, 'exclusionPattern', null],
-        [\Laratel\Opentelemetry\Services\MetricsService::class, 'previousCpu', []],
-        [\Laratel\Opentelemetry\Services\MetricsService::class, 'previousNetwork', []],
-        [\Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware::class, 'cacheWrapped', false],
-        [\Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware::class, 'cacheListenersRegistered', false],
-        [\Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware::class, 'dbListenerRegistered', false],
+        [OpenTelemetryServiceProvider::class, 'isReachable', null],
+        [OtelLoggerFactory::class, 'isReachable', null],
+        [OtelLoggerFactory::class, 'loggerProvider', null],
+        [TraceService::class, 'listenerRegistered', false],
+        [TraceService::class, 'exclusionPattern', null],
+        [MetricsService::class, 'previousCpu', []],
+        [MetricsService::class, 'previousNetwork', []],
+        [OpenTelemetryMetricsMiddleware::class, 'cacheWrapped', false],
+        [OpenTelemetryMetricsMiddleware::class, 'cacheListenersRegistered', false],
+        [OpenTelemetryMetricsMiddleware::class, 'dbListenerRegistered', false],
     ];
 
     protected function setUp(): void

@@ -3,18 +3,21 @@
 namespace Laratel\Opentelemetry\Middleware;
 
 use Closure;
-use Laratel\Opentelemetry\Services\MetricsService;
-use Laratel\Opentelemetry\Helpers\Helper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Laratel\Opentelemetry\Helpers\Helper;
+use Laratel\Opentelemetry\Services\MetricsService;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 class OpenTelemetryMetricsMiddleware
 {
     protected Helper $helper;
+
     protected float $startTime;
+
     protected static bool $cacheWrapped = false;
+
     private static bool $dbListenerRegistered = false;
 
     public function __construct(Helper $helper)
@@ -29,10 +32,10 @@ class OpenTelemetryMetricsMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $metrics = new MetricsService();
+        $metrics = new MetricsService;
 
         // Skip if OpenTelemetry not initialized
-        if (!$metrics->metrics) {
+        if (! $metrics->metrics) {
             return $next($request);
         }
 
@@ -48,15 +51,15 @@ class OpenTelemetryMetricsMiddleware
         $request->attributes->set('metrics_recorded', true);
 
         // Wrap Cache operations once per app lifecycle
-        if (!self::$cacheWrapped) {
+        if (! self::$cacheWrapped) {
             $metrics->wrapCacheOperations();
             self::$cacheWrapped = true;
         }
 
         // Start timer and register DB query listener
         $this->startTime = microtime(true);
-        if (!self::$dbListenerRegistered) {
-            DB::listen(fn($query) => $metrics->recordDbMetrics($query));
+        if (! self::$dbListenerRegistered) {
+            DB::listen(fn ($query) => $metrics->recordDbMetrics($query));
             self::$dbListenerRegistered = true;
         }
 

@@ -13,13 +13,16 @@ use OpenTelemetry\Contrib\Otlp\MetricExporter;
 use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
 use OpenTelemetry\SDK\Common\Attribute\Attributes;
+use OpenTelemetry\SDK\Common\Attribute\AttributesFactory;
 use OpenTelemetry\SDK\Common\Instrumentation\InstrumentationScopeFactory;
 use OpenTelemetry\SDK\Metrics\MeterProvider;
 use OpenTelemetry\SDK\Metrics\MetricReader\ExportingReader;
+use OpenTelemetry\SDK\Metrics\NoopMeterProvider;
 use OpenTelemetry\SDK\Metrics\StalenessHandler\ImmediateStalenessHandlerFactory;
 use OpenTelemetry\SDK\Metrics\View\CriteriaViewRegistry;
 use OpenTelemetry\SDK\Resource\ResourceInfo;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
+use OpenTelemetry\SDK\Trace\NoopTracerProvider;
 use OpenTelemetry\SDK\Trace\Sampler\AlwaysOnSampler;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
@@ -30,7 +33,7 @@ class OpenTelemetryServiceProvider extends ServiceProvider
 
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__ . '/../config/opentelemetry.php', 'opentelemetry');
+        $this->mergeConfigFrom(__DIR__.'/../config/opentelemetry.php', 'opentelemetry');
 
         if (! $this->isOpenTelemetryServerReachable()) {
             return;
@@ -48,11 +51,11 @@ class OpenTelemetryServiceProvider extends ServiceProvider
         $this->app->singleton(TracerProvider::class, function () use ($endpoint, $protocol) {
             try {
                 $transportFactory = $protocol === 'grpc'
-                    ? new GrpcTransportFactory()
-                    : new OtlpHttpTransportFactory();
+                    ? new GrpcTransportFactory
+                    : new OtlpHttpTransportFactory;
 
                 $transport = $transportFactory->create(
-                    $endpoint . ($protocol === 'grpc'
+                    $endpoint.($protocol === 'grpc'
                         ? '/opentelemetry.proto.collector.trace.v1.TraceService/Export'
                         : '/v1/traces'),
                     $protocol === 'grpc' ? 'application/x-protobuf' : 'application/json'
@@ -62,17 +65,17 @@ class OpenTelemetryServiceProvider extends ServiceProvider
 
                 return new TracerProvider(
                     new SimpleSpanProcessor($spanExporter),
-                    new AlwaysOnSampler(),
+                    new AlwaysOnSampler,
                     ResourceInfoFactory::defaultResource()
                 );
             } catch (\Throwable $e) {
                 Log::error('OpenTelemetry TracerProvider setup failed', ['error' => $e->getMessage()]);
-                return new \OpenTelemetry\SDK\Trace\NoopTracerProvider();
+
+                return new NoopTracerProvider;
             }
         });
 
-        $this->app->singleton('tracer', fn(Application $app) =>
-            $app->make(TracerProvider::class)->getTracer('otel-tracer')
+        $this->app->singleton('tracer', fn (Application $app) => $app->make(TracerProvider::class)->getTracer('otel-tracer')
         );
 
         $this->app->alias('tracer', TracerInterface::class);
@@ -83,18 +86,18 @@ class OpenTelemetryServiceProvider extends ServiceProvider
         $this->app->singleton(MeterProvider::class, function () use ($endpoint, $protocol) {
             try {
                 $transportFactory = $protocol === 'grpc'
-                    ? new GrpcTransportFactory()
-                    : new OtlpHttpTransportFactory();
+                    ? new GrpcTransportFactory
+                    : new OtlpHttpTransportFactory;
 
                 $transport = $transportFactory->create(
-                    $endpoint . ($protocol === 'grpc'
+                    $endpoint.($protocol === 'grpc'
                         ? '/opentelemetry.proto.collector.metrics.v1.MetricsService/Export'
                         : '/v1/metrics'),
                     $protocol === 'grpc' ? 'application/x-protobuf' : 'application/json'
                 );
 
                 $metricExporter = new MetricExporter($transport);
-                $attributesFactory = new \OpenTelemetry\SDK\Common\Attribute\AttributesFactory();
+                $attributesFactory = new AttributesFactory;
 
                 $resource = ResourceInfo::create(Attributes::create([
                     'service.name' => config('opentelemetry.service_name'),
@@ -104,22 +107,22 @@ class OpenTelemetryServiceProvider extends ServiceProvider
                 return new MeterProvider(
                     null,
                     $resource,
-                    new SystemClock(),
+                    new SystemClock,
                     $attributesFactory,
                     new InstrumentationScopeFactory($attributesFactory),
                     [new ExportingReader($metricExporter)],
-                    new CriteriaViewRegistry(),
+                    new CriteriaViewRegistry,
                     null,
-                    new ImmediateStalenessHandlerFactory()
+                    new ImmediateStalenessHandlerFactory
                 );
             } catch (\Throwable $e) {
                 Log::error('OpenTelemetry MeterProvider setup failed', ['error' => $e->getMessage()]);
-                return new \OpenTelemetry\SDK\Metrics\NoopMeterProvider();
+
+                return new NoopMeterProvider;
             }
         });
 
-        $this->app->singleton('metrics', fn(Application $app) =>
-            $app->make(MeterProvider::class)->getMeter('otel-metrics')
+        $this->app->singleton('metrics', fn (Application $app) => $app->make(MeterProvider::class)->getMeter('otel-metrics')
         );
 
         $this->app->alias('metrics', MeterInterface::class);
@@ -134,6 +137,7 @@ class OpenTelemetryServiceProvider extends ServiceProvider
         $endpoint = config('opentelemetry.endpoint');
         if (! filter_var($endpoint, FILTER_VALIDATE_URL)) {
             Log::error('Invalid OTEL endpoint', ['endpoint' => $endpoint]);
+
             return self::$isReachable = false;
         }
 
@@ -155,7 +159,7 @@ class OpenTelemetryServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->publishes([
-            __DIR__ . '/../config/opentelemetry.php' => config_path('opentelemetry.php'),
+            __DIR__.'/../config/opentelemetry.php' => config_path('opentelemetry.php'),
         ], 'opentelemetry-config');
     }
 }

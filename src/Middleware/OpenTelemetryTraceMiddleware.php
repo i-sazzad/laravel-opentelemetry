@@ -15,8 +15,7 @@ readonly class OpenTelemetryTraceMiddleware
     public function __construct(
         private Helper $helper,
         private TraceService $traceService
-    ) {
-    }
+    ) {}
 
     /**
      * Handle an incoming request and create a root trace span.
@@ -36,7 +35,7 @@ readonly class OpenTelemetryTraceMiddleware
         $this->traceService->dbQueryTrace();
 
         $route = $request->route();
-        $spanName = $request->method() . ' ' . ($route ? ($route->getName() ?? $route->uri()) : $request->path());
+        $spanName = $request->method().' '.($route ? ($route->getName() ?? $route->uri()) : $request->path());
 
         $span = $tracer
             ->spanBuilder($spanName)

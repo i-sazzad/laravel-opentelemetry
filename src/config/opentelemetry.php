@@ -9,8 +9,8 @@ return [
     'protocol' => env('OTEL_EXPORTER_OTLP_PROTOCOL', 'http'),
 
     // === Exporters (Traces / Metrics / Logs) ===
-    'traces_exporter'  => env('OTEL_TRACES_EXPORTER', 'otlp'),
-    'logs_exporter'    => env('OTEL_LOGS_EXPORTER', 'otlp'),
+    'traces_exporter' => env('OTEL_TRACES_EXPORTER', 'otlp'),
+    'logs_exporter' => env('OTEL_LOGS_EXPORTER', 'otlp'),
     'metrics_exporter' => env('OTEL_METRICS_EXPORTER', 'otlp'),
 
     // === Propagation & Sampling ===
@@ -18,9 +18,9 @@ return [
     'traces_sampler' => env('OTEL_TRACES_SAMPLER', 'always_on'),
 
     // === Service Metadata ===
-    'service_name'      => env('OTEL_SERVICE_NAME', 'laravel_app'),
+    'service_name' => env('OTEL_SERVICE_NAME', 'laravel_app'),
     'service_namespace' => env('OTEL_SERVICE_NAMESPACE', 'laratel'),
-    'service_version'   => env('OTEL_SERVICE_VERSION', '1.0.0'),
+    'service_version' => env('OTEL_SERVICE_VERSION', '1.0.0'),
     'resource_attributes' => array_filter(
         explode(',', env('OTEL_RESOURCE_ATTRIBUTES', 'deployment.environment=production,service.namespace=default_namespace'))
     ),
@@ -50,10 +50,10 @@ return [
     ],
 
     // === System Paths for Metrics ===
-    'cpu_path'        => '/proc/stat',
-    'memory_path'     => '/proc/meminfo',
-    'disk_path'       => '/',
-    'network_path'    => '/proc/net/dev',
+    'cpu_path' => '/proc/stat',
+    'memory_path' => '/proc/meminfo',
+    'disk_path' => '/',
+    'network_path' => '/proc/net/dev',
     'connection_path' => '/proc/net/tcp',
 
     'network_states' => [
