@@ -35,10 +35,13 @@ class Helper
 
         $meterProvider = app(MeterProvider::class);
 
-        try {
-            $result = $meterProvider->forceFlush();
+        // A Noop provider may be bound if exporter setup failed; it has no forceFlush().
+        if (! $meterProvider instanceof MeterProvider) {
+            return false;
+        }
 
-            return $result === null ? true : (bool) $result;
+        try {
+            return (bool) $meterProvider->forceFlush();
         } catch (\Throwable $e) {
             if (config('app.debug')) {
                 Log::warning('[OTEL] Metric flush failed: '.$e->getMessage());
