@@ -7,20 +7,20 @@ parameters:
 			path: src/Logger/OtelLoggerFactory.php
 
 		-
-			message: '#^Call to function method_exists\(\) with Laratel\\Opentelemetry\\Helpers\\Helper and ''flushMetrics'' will always evaluate to true\.$#'
-			identifier: function.alreadyNarrowedType
-			count: 1
-			path: src/Middleware/OpenTelemetryMetricsMiddleware.php
-
-		-
 			message: '#^Constant LARAVEL_START not found\.$#'
 			identifier: constant.notFound
 			count: 1
 			path: src/Middleware/OpenTelemetryTraceMiddleware.php
 
 		-
-			message: '#^Expression on left side of \?\? is not nullable\.$#'
-			identifier: nullCoalesce.expr
+			message: '#^Static property Laratel\\Opentelemetry\\Services\\MetricsService\:\:\$previousCpu is never read, only written\.$#'
+			identifier: property.onlyWritten
+			count: 1
+			path: src/Services/MetricsService.php
+
+		-
+			message: '#^Static property Laratel\\Opentelemetry\\Services\\MetricsService\:\:\$previousNetwork is never read, only written\.$#'
+			identifier: property.onlyWritten
 			count: 1
 			path: src/Services/MetricsService.php
 

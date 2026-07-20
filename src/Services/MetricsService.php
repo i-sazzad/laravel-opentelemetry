@@ -3,94 +3,78 @@
 namespace Laratel\Opentelemetry\Services;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use OpenTelemetry\API\Metrics\MeterInterface;
 use Symfony\Component\HttpFoundation\Response;
 
 class MetricsService
 {
-    protected mixed $meter;
+    /** @var array<string, object> instrument name => instrument */
+    public array $metrics = [];
 
-    public array $metrics;
+    private ?MeterInterface $meter;
 
-    public function __construct()
+    /** Previous /proc snapshots for delta computation (persist per worker process). */
+    private static array $previousCpu = [];
+
+    private static array $previousNetwork = [];
+
+    public function __construct(?MeterInterface $meter = null)
     {
-        $this->metrics = [];
-        $this->meter = [];
+        $this->meter = $meter ?? (app()->bound('metrics') ? app('metrics') : null);
 
-        if (! app()->bound('metrics')) {
-            return;
+        if ($this->meter !== null) {
+            $this->initializeMetrics();
         }
-
-        $this->meter = app('metrics');
-        $this->initializeMetrics();
     }
 
-    /**
-     * ----------------------------------------------------
-     * Initialize all application and system metrics
-     * ----------------------------------------------------
-     */
     public function initializeMetrics(): void
     {
         $this->metrics = [
-            // --------------------------------------------------
-            // HTTP METRICS
-            // --------------------------------------------------
-            'http_request_total' => $this->meter->createCounter('laratel_http_request_total', ''),
-            'http_status_code_total' => $this->meter->createCounter('laratel_http_status_code_total', ''),
-            'http_failed_requests_total' => $this->meter->createCounter('laratel_http_failed_requests_total', ''),
-            'http_request_latency_seconds' => $this->meter->createHistogram('laratel_http_request_latency_seconds', ''),
-            'http_request_size_bytes' => $this->meter->createHistogram('laratel_http_request_size_bytes', ''),
-            'http_response_size_bytes' => $this->meter->createHistogram('laratel_http_response_size_bytes', ''),
-            'http_requests_in_progress' => $this->meter->createHistogram('laratel_http_requests_in_progress', ''),
+            // HTTP
+            'http_request_total' => $this->meter->createCounter('laratel_http_request_total'),
+            'http_status_code_total' => $this->meter->createCounter('laratel_http_status_code_total'),
+            'http_failed_requests_total' => $this->meter->createCounter('laratel_http_failed_requests_total'),
+            'http_request_latency_seconds' => $this->meter->createHistogram('laratel_http_request_latency_seconds', 's'),
+            'http_request_size_bytes' => $this->meter->createHistogram('laratel_http_request_size_bytes', 'By'),
+            'http_response_size_bytes' => $this->meter->createHistogram('laratel_http_response_size_bytes', 'By'),
+            'http_requests_in_progress' => $this->meter->createUpDownCounter('laratel_http_requests_in_progress'),
 
-            // --------------------------------------------------
-            // SYSTEM METRICS
-            // --------------------------------------------------
-            'system_cpu_time_seconds_total' => $this->meter->createCounter('laratel_system_cpu_time_seconds_total', ''),
-            'system_memory_usage_bytes' => $this->meter->createHistogram('laratel_system_memory_usage_bytes', ''),
-            'system_disk_total_bytes' => $this->meter->createHistogram('laratel_system_disk_total_bytes', ''),
-            'system_disk_free_bytes' => $this->meter->createHistogram('laratel_system_disk_free_bytes', ''),
-            'system_disk_usage_bytes' => $this->meter->createHistogram('laratel_system_disk_usage_bytes', ''),
-            'application_uptime_seconds' => $this->meter->createHistogram('laratel_application_uptime_seconds', ''),
+            // SYSTEM
+            'system_cpu_time_seconds_total' => $this->meter->createCounter('laratel_system_cpu_time_seconds_total', 's'),
+            'system_memory_usage_bytes' => $this->meter->createHistogram('laratel_system_memory_usage_bytes', 'By'),
+            'system_disk_total_bytes' => $this->meter->createHistogram('laratel_system_disk_total_bytes', 'By'),
+            'system_disk_free_bytes' => $this->meter->createHistogram('laratel_system_disk_free_bytes', 'By'),
+            'system_disk_usage_bytes' => $this->meter->createHistogram('laratel_system_disk_usage_bytes', 'By'),
 
-            // --------------------------------------------------
-            // NETWORK METRICS
-            // --------------------------------------------------
-            'system_network_io_bytes_total' => $this->meter->createCounter('laratel_system_network_io_bytes_total', ''),
-            'system_network_dropped_total' => $this->meter->createCounter('laratel_system_network_dropped_total', ''),
-            'system_network_errors_total' => $this->meter->createCounter('laratel_system_network_errors_total', ''),
-            'network_inbound_bytes' => $this->meter->createHistogram('laratel_network_inbound_bytes', ''),
-            'network_outbound_bytes' => $this->meter->createHistogram('laratel_network_outbound_bytes', ''),
-            'active_network_connections' => $this->meter->createHistogram('laratel_active_network_connections', ''),
+            // NETWORK
+            'system_network_io_bytes_total' => $this->meter->createCounter('laratel_system_network_io_bytes_total', 'By'),
+            'system_network_dropped_total' => $this->meter->createCounter('laratel_system_network_dropped_total'),
+            'system_network_errors_total' => $this->meter->createCounter('laratel_system_network_errors_total'),
+            'active_network_connections' => $this->meter->createHistogram('laratel_active_network_connections'),
 
-            // --------------------------------------------------
-            // DATABASE METRICS
-            // --------------------------------------------------
-            'db_query_total' => $this->meter->createCounter('laratel_db_query_total', ''),
-            'db_query_latency_seconds' => $this->meter->createHistogram('laratel_db_query_latency_seconds', ''),
-            'db_error_total' => $this->meter->createCounter('laratel_db_error_total', ''),
+            // DATABASE
+            'db_query_total' => $this->meter->createCounter('laratel_db_query_total'),
+            'db_query_latency_seconds' => $this->meter->createHistogram('laratel_db_query_latency_seconds', 's'),
 
-            // --------------------------------------------------
-            // CACHE METRICS
-            // --------------------------------------------------
-            'cache_hit_total' => $this->meter->createCounter('laratel_cache_hit_total', ''),
-            'cache_miss_total' => $this->meter->createCounter('laratel_cache_miss_total', ''),
-            'cache_store_total' => $this->meter->createCounter('laratel_cache_store_total', ''),
-            'cache_delete_total' => $this->meter->createCounter('laratel_cache_delete_total', ''),
+            // CACHE
+            'cache_hit_total' => $this->meter->createCounter('laratel_cache_hit_total'),
+            'cache_miss_total' => $this->meter->createCounter('laratel_cache_miss_total'),
+            'cache_store_total' => $this->meter->createCounter('laratel_cache_store_total'),
+            'cache_delete_total' => $this->meter->createCounter('laratel_cache_delete_total'),
 
-            // --------------------------------------------------
-            // ERROR METRICS
-            // --------------------------------------------------
-            'error_total' => $this->meter->createCounter('laratel_error_total', ''),
+            // ERRORS
+            'error_total' => $this->meter->createCounter('laratel_error_total'),
         ];
     }
 
+    public function registerCacheEventListeners(): void
+    {
+        // Implemented in the cache-metrics task.
+    }
+
     /**
-     * ----------------------------------------------------
-     * Record HTTP metrics for a single request/response
-     * ----------------------------------------------------
+     * Record HTTP metrics for a single request/response.
      */
     public function recordHttpMetrics(Request $request, Response $response, float $startTime): void
     {
@@ -106,50 +90,40 @@ class MetricsService
         ];
 
         try {
-            // In-progress tracking
-            $this->metrics['http_requests_in_progress']->record(+1, $labels);
-
-            // Total requests
             $this->metrics['http_request_total']->add(1, $labels);
             $this->metrics['http_status_code_total']->add(1, $labels);
             $this->metrics['http_request_latency_seconds']->record($latency, $labels);
-            $this->metrics['http_request_size_bytes']->record(strlen($request->getContent() ?? ''), $labels);
-            $this->metrics['http_response_size_bytes']->record(strlen($response->getContent() ?? ''), $labels);
+            $this->metrics['http_request_size_bytes']->record(strlen($request->getContent() ?: ''), $labels);
+            $this->metrics['http_response_size_bytes']->record(strlen($response->getContent() ?: ''), $labels);
 
-            // Failed request detection
             if ($status >= 400) {
                 $errorType = $status >= 500 ? 'server_error' : 'client_error';
                 $this->metrics['http_failed_requests_total']->add(1, array_merge($labels, [
                     'error_type' => $errorType,
                 ]));
             }
-
-            // Mark request done (decrease active)
-            $this->metrics['http_requests_in_progress']->record(-1, $labels);
         } catch (\Throwable $e) {
             Log::error("HTTP metrics record failed: {$e->getMessage()}");
         }
     }
 
     /**
-     * Record system-level metrics (CPU, memory, disk, uptime)
+     * Record system-level metrics (CPU, memory, disk)
      */
     public function recordSystemMetrics(): void
     {
         $cpu = $this->getCpuStats();
         foreach ($cpu as $state => $value) {
-            $this->metrics['system_cpu_time_seconds_total']->add($value,
-                [
-                    'state' => $state, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-                ]);
+            $this->metrics['system_cpu_time_seconds_total']->add($value, [
+                'state' => $state, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+            ]);
         }
 
         $mem = $this->getMemoryInfo();
         foreach ($mem as $key => $value) {
-            $this->metrics['system_memory_usage_bytes']->record($value,
-                [
-                    'type' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-                ]);
+            $this->metrics['system_memory_usage_bytes']->record($value, [
+                'type' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+            ]);
         }
 
         $path = config('opentelemetry.disk_path');
@@ -157,24 +131,15 @@ class MetricsService
         $free = @disk_free_space($path);
         $used = $total - $free;
 
-        $this->metrics['system_disk_total_bytes']->record($total,
-            [
-                'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-            ]);
-        $this->metrics['system_disk_free_bytes']->record($free,
-            [
-                'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-            ]);
-        $this->metrics['system_disk_usage_bytes']->record($used,
-            [
-                'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-            ]);
-
-        $uptime = time() - ($_SERVER['REQUEST_TIME_FLOAT'] ?? time());
-        $this->metrics['application_uptime_seconds']->record($uptime,
-            [
-                'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-            ]);
+        $this->metrics['system_disk_total_bytes']->record($total, [
+            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+        ]);
+        $this->metrics['system_disk_free_bytes']->record($free, [
+            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+        ]);
+        $this->metrics['system_disk_usage_bytes']->record($used, [
+            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
+        ]);
     }
 
     /**
@@ -192,12 +157,6 @@ class MetricsService
 
         $this->metrics['db_query_total']->add(1, $labels);
         $this->metrics['db_query_latency_seconds']->record($execTime, $labels);
-
-        if (property_exists($query, 'error') && $query->error) {
-            $this->metrics['db_error_total']->add(1, [
-                'error' => $query->error, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-            ]);
-        }
     }
 
     /**
@@ -208,64 +167,6 @@ class MetricsService
         $this->metrics['error_total']->add(1, [
             'message' => substr($e->getMessage(), 0, 120), 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
         ]);
-    }
-
-    /**
-     * Wrap cache operations with metrics tracking
-     */
-    public function wrapCacheOperations(): void
-    {
-        Cache::extend('otel', function ($app, $config) {
-            $store = Cache::driver($config['driver']);
-
-            return new class($store, $this->metrics)
-            {
-                protected $store;
-
-                protected $metrics;
-
-                public function __construct($store, $metrics)
-                {
-                    $this->store = $store;
-                    $this->metrics = $metrics;
-                }
-
-                public function get($key)
-                {
-                    $value = $this->store->get($key);
-                    $metric = $value ? 'cache_hit_total' : 'cache_miss_total';
-                    $this->metrics[$metric]->add(1,
-                        [
-                            'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-                        ]);
-
-                    return $value;
-                }
-
-                public function put($key, $value, $ttl = null): void
-                {
-                    $this->store->put($key, $value, $ttl);
-                    $this->metrics['cache_store_total']->add(1,
-                        [
-                            'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-                        ]);
-                }
-
-                public function forget($key): void
-                {
-                    $this->store->forget($key);
-                    $this->metrics['cache_delete_total']->add(1,
-                        [
-                            'key' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-                        ]);
-                }
-
-                public function __call($method, $params)
-                {
-                    return $this->store->$method(...$params);
-                }
-            };
-        });
     }
 
     /**
@@ -338,14 +239,11 @@ class MetricsService
                 $iface = $m[1];
                 $fields = preg_split('/\s+/', trim($m[2]));
 
-                // Safely extract fields with defaults
                 $rxBytes = (int) ($fields[0] ?? 0);
-                $rxPackets = (int) ($fields[1] ?? 0);
                 $rxErrors = (int) ($fields[2] ?? 0);
                 $rxDropped = (int) ($fields[3] ?? 0);
 
                 $txBytes = (int) ($fields[8] ?? 0);
-                $txPackets = (int) ($fields[9] ?? 0);
                 $txErrors = (int) ($fields[10] ?? 0);
                 $txDropped = (int) ($fields[11] ?? 0);
 
@@ -355,18 +253,9 @@ class MetricsService
                     'service.name' => config('opentelemetry.service_name'),
                 ];
 
-                // Record counters and histograms
                 $this->metrics['system_network_io_bytes_total']->add($rxBytes + $txBytes, $labels);
                 $this->metrics['system_network_dropped_total']->add($rxDropped + $txDropped, $labels);
                 $this->metrics['system_network_errors_total']->add($rxErrors + $txErrors, $labels);
-
-                if (isset($this->metrics['network_inbound_bytes'])) {
-                    $this->metrics['network_inbound_bytes']->record($rxBytes, $labels);
-                }
-
-                if (isset($this->metrics['network_outbound_bytes'])) {
-                    $this->metrics['network_outbound_bytes']->record($txBytes, $labels);
-                }
             }
         }
 

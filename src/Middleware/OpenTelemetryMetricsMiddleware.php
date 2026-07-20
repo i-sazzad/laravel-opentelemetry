@@ -12,76 +12,56 @@ use Throwable;
 
 class OpenTelemetryMetricsMiddleware
 {
-    protected Helper $helper;
-
-    protected float $startTime;
-
-    protected static bool $cacheWrapped = false;
-
     private static bool $dbListenerRegistered = false;
 
-    public function __construct(Helper $helper)
-    {
-        $this->helper = $helper;
-    }
+    private static bool $cacheListenersRegistered = false;
+
+    public function __construct(
+        protected Helper $helper,
+        protected MetricsService $metrics
+    ) {}
 
     /**
-     * Handle incoming request and record observability metrics.
-     *
      * @throws Throwable
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $metrics = new MetricsService;
-
-        // Skip if OpenTelemetry not initialized
-        if (! $metrics->metrics) {
+        if ($this->metrics->metrics === [] || $this->helper->shouldExclude($request->path())) {
             return $next($request);
         }
 
-        // Skip excluded routes (like /health, /metrics itself)
-        if ($this->helper->shouldExclude($request->path())) {
-            return $next($request);
-        }
-
-        // Prevent duplicate recording
         if ($request->attributes->get('metrics_recorded', false)) {
             return $next($request);
         }
         $request->attributes->set('metrics_recorded', true);
 
-        // Wrap Cache operations once per app lifecycle
-        if (! self::$cacheWrapped) {
-            $metrics->wrapCacheOperations();
-            self::$cacheWrapped = true;
+        if (! self::$cacheListenersRegistered) {
+            $this->metrics->registerCacheEventListeners();
+            self::$cacheListenersRegistered = true;
         }
 
-        // Start timer and register DB query listener
-        $this->startTime = microtime(true);
         if (! self::$dbListenerRegistered) {
-            DB::listen(fn ($query) => $metrics->recordDbMetrics($query));
+            DB::listen(fn ($query) => $this->metrics->recordDbMetrics($query));
             self::$dbListenerRegistered = true;
         }
 
+        $startTime = microtime(true);
+        $this->metrics->metrics['http_requests_in_progress']->add(1);
+
         try {
-            // Process the request
             $response = $next($request);
 
-            // Record HTTP + system + network metrics
-            $metrics->recordHttpMetrics($request, $response, $this->startTime);
-            $metrics->recordSystemMetrics();
-            $metrics->recordNetworkMetrics();
+            $this->metrics->recordHttpMetrics($request, $response, $startTime);
+            $this->metrics->recordSystemMetrics();
+            $this->metrics->recordNetworkMetrics();
+
+            return $response;
         } catch (Throwable $e) {
-            // Capture any thrown exceptions
-            $metrics->recordErrorMetrics($e);
+            $this->metrics->recordErrorMetrics($e);
             throw $e;
         } finally {
-            // Flush metrics safely (OTLP/Prometheus exporter)
-            if (method_exists($this->helper, 'flushMetrics')) {
-                $this->helper->flushMetrics();
-            }
+            $this->metrics->metrics['http_requests_in_progress']->add(-1);
+            $this->helper->flushMetrics();
         }
-
-        return $response;
     }
 }

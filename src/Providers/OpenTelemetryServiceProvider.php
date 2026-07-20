@@ -35,6 +35,9 @@ class OpenTelemetryServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/opentelemetry.php', 'opentelemetry');
 
+        $this->app->singleton(\Laratel\Opentelemetry\Services\MetricsService::class);
+        $this->app->singleton(\Laratel\Opentelemetry\Services\TraceService::class);
+
         if (! $this->isOpenTelemetryServerReachable()) {
             return;
         }
