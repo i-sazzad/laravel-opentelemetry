@@ -7,18 +7,6 @@ parameters:
 			path: src/Logger/OtelLoggerFactory.php
 
 		-
-			message: '#^Constant LARAVEL_START not found\.$#'
-			identifier: constant.notFound
-			count: 1
-			path: src/Middleware/OpenTelemetryTraceMiddleware.php
-
-		-
-			message: '#^Constant LARAVEL_START not found\.$#'
-			identifier: constant.notFound
-			count: 1
-			path: src/Services/TraceService.php
-
-		-
 			message: '#^Parameter \#2 \$default of method Illuminate\\Http\\Request\:\:header\(\) expects array\|string\|null, int given\.$#'
 			identifier: argument.type
 			count: 1
