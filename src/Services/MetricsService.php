@@ -166,11 +166,11 @@ class MetricsService
 
         $labels = [
             'db.operation' => $operation,
-            'db.connection' => $query->connectionName ?? 'default',
+            'db.connection' => $query->connectionName ?: 'default',
         ];
 
         $this->metrics['db_query_total']->add(1, $labels);
-        $this->metrics['db_query_latency_seconds']->record(($query->time ?? 0) / 1000, $labels);
+        $this->metrics['db_query_latency_seconds']->record($query->time / 1000, $labels);
     }
 
     /**
@@ -232,73 +232,90 @@ class MetricsService
     }
 
     /**
-     * Record network-level metrics (I/O, drops, errors, active connections)
+     * Record network I/O as deltas since the previous /proc/net/dev reading,
+     * split by interface and direction. TCP connection-state gauge readings
+     * are recorded as-is (they are point-in-time counts, not cumulative).
      */
     public function recordNetworkMetrics(): void
     {
-        if (! isset($this->metrics['system_network_io_bytes_total'])) {
+        if (! config('opentelemetry.system_metrics_enabled', true)) {
             return;
         }
 
         $networkPath = config('opentelemetry.network_path');
-        if (! file_exists($networkPath) || ! is_readable($networkPath)) {
-            return;
-        }
+        if (is_readable($networkPath)) {
+            foreach (file($networkPath) as $line) {
+                if (! preg_match('/^\s*([\w]+):\s*(.+)$/', $line, $m)) {
+                    continue;
+                }
 
-        $lines = file($networkPath);
-
-        foreach ($lines as $line) {
-            // Matches typical /proc/net/dev line format:
-            // iface: bytes packets errs drop fifo frame compressed multicast bytes packets errs drop fifo colls carrier compressed
-            if (preg_match('/^\s*([\w]+):\s*(.+)$/', $line, $m)) {
                 $iface = $m[1];
                 $fields = preg_split('/\s+/', trim($m[2]));
 
-                $rxBytes = (int) ($fields[0] ?? 0);
-                $rxErrors = (int) ($fields[2] ?? 0);
-                $rxDropped = (int) ($fields[3] ?? 0);
-
-                $txBytes = (int) ($fields[8] ?? 0);
-                $txErrors = (int) ($fields[10] ?? 0);
-                $txDropped = (int) ($fields[11] ?? 0);
-
-                $labels = [
-                    'interface' => $iface,
-                    'host' => gethostname(),
-                    'service.name' => config('opentelemetry.service_name'),
+                $current = [
+                    'receive' => [
+                        'bytes' => (int) ($fields[0] ?? 0),
+                        'errors' => (int) ($fields[2] ?? 0),
+                        'dropped' => (int) ($fields[3] ?? 0),
+                    ],
+                    'transmit' => [
+                        'bytes' => (int) ($fields[8] ?? 0),
+                        'errors' => (int) ($fields[10] ?? 0),
+                        'dropped' => (int) ($fields[11] ?? 0),
+                    ],
                 ];
 
-                $this->metrics['system_network_io_bytes_total']->add($rxBytes + $txBytes, $labels);
-                $this->metrics['system_network_dropped_total']->add($rxDropped + $txDropped, $labels);
-                $this->metrics['system_network_errors_total']->add($rxErrors + $txErrors, $labels);
+                $previous = self::$previousNetwork[$iface] ?? null;
+                self::$previousNetwork[$iface] = $current;
+                if ($previous === null) {
+                    continue;
+                }
+
+                foreach (['receive', 'transmit'] as $direction) {
+                    $labels = ['network.interface' => $iface, 'network.io.direction' => $direction];
+                    $this->addCounterDelta('system_network_io_bytes_total', $current[$direction]['bytes'] - $previous[$direction]['bytes'], $labels);
+                    $this->addCounterDelta('system_network_errors_total', $current[$direction]['errors'] - $previous[$direction]['errors'], $labels);
+                    $this->addCounterDelta('system_network_dropped_total', $current[$direction]['dropped'] - $previous[$direction]['dropped'], $labels);
+                }
             }
         }
 
-        // Active connections (TCP states)
-        $connectionPath = config('opentelemetry.connection_path');
-        if (file_exists($connectionPath)) {
-            $stateMap = [
-                '01' => 'ESTABLISHED', '02' => 'SYN_SENT', '03' => 'SYN_RECV',
-                '04' => 'FIN_WAIT1', '05' => 'FIN_WAIT2', '06' => 'TIME_WAIT',
-                '07' => 'CLOSE', '08' => 'CLOSE_WAIT', '09' => 'LAST_ACK',
-                '0A' => 'LISTEN', '0B' => 'CLOSING',
-            ];
+        $this->recordTcpConnectionStates();
+    }
 
-            $counts = array_fill_keys(array_values($stateMap), 0);
-            foreach (file($connectionPath) as $line) {
-                if (preg_match('/\s+[0-9A-F]+:\s+[0-9A-F]+\s+[0-9A-F]+\s+([0-9A-F]{2})/', $line, $m)) {
-                    $hex = strtoupper($m[1]);
-                    if (isset($stateMap[$hex])) {
-                        $counts[$stateMap[$hex]]++;
-                    }
+    private function addCounterDelta(string $metric, int $delta, array $labels): void
+    {
+        if ($delta > 0) {
+            $this->metrics[$metric]->add($delta, $labels);
+        }
+    }
+
+    private function recordTcpConnectionStates(): void
+    {
+        $connectionPath = config('opentelemetry.connection_path');
+        if (! is_readable($connectionPath)) {
+            return;
+        }
+
+        $stateMap = [
+            '01' => 'ESTABLISHED', '02' => 'SYN_SENT', '03' => 'SYN_RECV',
+            '04' => 'FIN_WAIT1', '05' => 'FIN_WAIT2', '06' => 'TIME_WAIT',
+            '07' => 'CLOSE', '08' => 'CLOSE_WAIT', '09' => 'LAST_ACK',
+            '0A' => 'LISTEN', '0B' => 'CLOSING',
+        ];
+
+        $counts = array_fill_keys(array_values($stateMap), 0);
+        foreach (file($connectionPath) as $line) {
+            if (preg_match('/\s+[0-9A-F]+:\s+[0-9A-F]+\s+[0-9A-F]+\s+([0-9A-F]{2})/', $line, $m)) {
+                $state = $stateMap[strtoupper($m[1])] ?? null;
+                if ($state !== null) {
+                    $counts[$state]++;
                 }
             }
+        }
 
-            foreach ($counts as $state => $count) {
-                $this->metrics['active_network_connections']->record($count, [
-                    'state' => $state, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-                ]);
-            }
+        foreach ($counts as $state => $count) {
+            $this->metrics['active_network_connections']->record($count, ['network.state' => $state]);
         }
     }
 }

@@ -79,6 +79,30 @@ class SystemMetricsTest extends TestCase
         $this->assertEquals(['user' => 0.5, 'system' => 0.1, 'idle' => 10.0], $calls);
     }
 
+    public function test_network_io_records_deltas_per_direction(): void
+    {
+        $netFile = tempnam(sys_get_temp_dir(), 'otel-net-');
+        config()->set('opentelemetry.network_path', $netFile);
+        file_put_contents($netFile, "  eth0: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n");
+
+        $service = $this->makeService();
+        $calls = [];
+        $spy = $this->createMock(CounterInterface::class);
+        $spy->method('add')->willReturnCallback(function ($value, $labels) use (&$calls) {
+            $calls[$labels['network.io.direction']] = $value;
+        });
+        $service->metrics['system_network_io_bytes_total'] = $spy;
+
+        $service->recordNetworkMetrics(); // snapshot only
+        $this->assertSame([], $calls);
+
+        file_put_contents($netFile, "  eth0: 1500 15 0 0 0 0 0 0 2100 21 0 0 0 0 0 0\n");
+        $service->recordNetworkMetrics();
+
+        $this->assertSame(['receive' => 500, 'transmit' => 100], $calls);
+        @unlink($netFile);
+    }
+
     public function test_disabled_flag_skips_everything(): void
     {
         config()->set('opentelemetry.system_metrics_enabled', false);

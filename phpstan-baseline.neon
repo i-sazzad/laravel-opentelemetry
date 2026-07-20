@@ -13,18 +13,6 @@ parameters:
 			path: src/Middleware/OpenTelemetryTraceMiddleware.php
 
 		-
-			message: '#^Static property Laratel\\Opentelemetry\\Services\\MetricsService\:\:\$previousCpu is never read, only written\.$#'
-			identifier: property.onlyWritten
-			count: 1
-			path: src/Services/MetricsService.php
-
-		-
-			message: '#^Static property Laratel\\Opentelemetry\\Services\\MetricsService\:\:\$previousNetwork is never read, only written\.$#'
-			identifier: property.onlyWritten
-			count: 1
-			path: src/Services/MetricsService.php
-
-		-
 			message: '#^Constant LARAVEL_START not found\.$#'
 			identifier: constant.notFound
 			count: 1
