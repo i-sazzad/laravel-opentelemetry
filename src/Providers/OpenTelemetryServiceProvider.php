@@ -130,6 +130,10 @@ class OpenTelemetryServiceProvider extends ServiceProvider
 
     private function isOpenTelemetryServerReachable(): bool
     {
+        if (! config('opentelemetry.enable_reachability_check', true)) {
+            return true;
+        }
+
         if (self::$isReachable !== null) {
             return self::$isReachable;
         }
@@ -143,9 +147,10 @@ class OpenTelemetryServiceProvider extends ServiceProvider
 
         $host = parse_url($endpoint, PHP_URL_HOST);
         $port = parse_url($endpoint, PHP_URL_PORT)
-            ?? (str_starts_with($endpoint, 'http') ? 4318 : 4317);
+            ?? (config('opentelemetry.protocol') === 'grpc' ? 4317 : 4318);
+        $timeout = (float) config('opentelemetry.reachability_timeout', 0.1);
 
-        $connection = @stream_socket_client("tcp://{$host}:{$port}", $errno, $errstr, 0.05, STREAM_CLIENT_CONNECT);
+        $connection = @stream_socket_client("tcp://{$host}:{$port}", $errno, $errstr, $timeout, STREAM_CLIENT_CONNECT);
         self::$isReachable = is_resource($connection);
         if (self::$isReachable) {
             fclose($connection);

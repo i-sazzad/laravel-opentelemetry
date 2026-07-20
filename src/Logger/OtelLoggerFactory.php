@@ -90,6 +90,10 @@ class OtelLoggerFactory
      */
     private function isServerReachable(): bool
     {
+        if (! config('opentelemetry.enable_reachability_check', true)) {
+            return true;
+        }
+
         if (self::$isReachable !== null) {
             return self::$isReachable;
         }
@@ -108,7 +112,8 @@ class OtelLoggerFactory
             $port = ($scheme === 'https' || $scheme === 'http') ? 4318 : 4317;
         }
 
-        $connection = @fsockopen($host, $port, $errno, $errstr, 0.2);
+        $timeout = (float) config('opentelemetry.reachability_timeout', 0.1);
+        $connection = @fsockopen($host, $port, $errno, $errstr, $timeout);
 
         if (is_resource($connection)) {
             fclose($connection);
