@@ -3,10 +3,13 @@
 return [
 
     // === OTLP Endpoint Configuration ===
-    'endpoint' => env('OTEL_EXPORTER_OTLP_ENDPOINT', env('OTEL_EXPORTER_OTLP_PROTOCOL', 'grpc') === 'grpc'
-        ? 'http://localhost:4317'
-        : 'http://localhost:4318'),
     'protocol' => env('OTEL_EXPORTER_OTLP_PROTOCOL', 'http'),
+    'endpoint' => env(
+        'OTEL_EXPORTER_OTLP_ENDPOINT',
+        env('OTEL_EXPORTER_OTLP_PROTOCOL', 'http') === 'grpc'
+            ? 'http://localhost:4317'
+            : 'http://localhost:4318'
+    ),
 
     // === Exporters (Traces / Metrics / Logs) ===
     'traces_exporter' => env('OTEL_TRACES_EXPORTER', 'otlp'),
@@ -27,6 +30,7 @@ return [
 
     // === Optional Flags ===
     'enable_reachability_check' => env('OTEL_ENABLE_REACHABILITY_CHECK', true),
+    'reachability_timeout' => (float) env('OTEL_REACHABILITY_TIMEOUT', 0.1),
 
     // === Route Exclusions ===
     'excluded_routes' => [
