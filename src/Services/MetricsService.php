@@ -82,24 +82,21 @@ class MetricsService
         $status = $response->getStatusCode();
 
         $labels = [
-            'http.method' => $request->method(),
-            'http.route' => $request->path(),
-            'net.host.name' => gethostname(),
-            'http.status_code' => $status,
-            'service.name' => config('opentelemetry.service_name'),
+            'http.request.method' => $request->method(),
+            'http.route' => $request->route()?->uri() ?? 'unknown',
+            'http.response.status_code' => $status,
         ];
 
         try {
             $this->metrics['http_request_total']->add(1, $labels);
             $this->metrics['http_status_code_total']->add(1, $labels);
             $this->metrics['http_request_latency_seconds']->record($latency, $labels);
-            $this->metrics['http_request_size_bytes']->record(strlen($request->getContent() ?: ''), $labels);
+            $this->metrics['http_request_size_bytes']->record(strlen($request->getContent()), $labels);
             $this->metrics['http_response_size_bytes']->record(strlen($response->getContent() ?: ''), $labels);
 
             if ($status >= 400) {
-                $errorType = $status >= 500 ? 'server_error' : 'client_error';
                 $this->metrics['http_failed_requests_total']->add(1, array_merge($labels, [
-                    'error_type' => $errorType,
+                    'error.type' => $status >= 500 ? 'server_error' : 'client_error',
                 ]));
             }
         } catch (\Throwable $e) {
