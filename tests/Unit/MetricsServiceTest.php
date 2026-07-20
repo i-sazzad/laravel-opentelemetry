@@ -2,12 +2,14 @@
 
 namespace Laratel\Opentelemetry\Tests\Unit;
 
+use Illuminate\Cache\Events\CacheHit;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 use Laratel\Opentelemetry\Helpers\Helper;
 use Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware;
 use Laratel\Opentelemetry\Services\MetricsService;
+use Illuminate\Support\Facades\Event;
 use Laratel\Opentelemetry\Tests\TestCase;
 use OpenTelemetry\API\Metrics\CounterInterface;
 use OpenTelemetry\API\Metrics\HistogramInterface;
@@ -129,6 +131,21 @@ class MetricsServiceTest extends TestCase
         $service->metrics['error_total'] = $counter;
 
         $service->recordErrorMetrics(new \RuntimeException('secret user data in message'));
+    }
+
+    public function test_cache_hit_event_increments_counter_without_key_label(): void
+    {
+        $service = $this->makeService();
+
+        $counter = $this->createMock(CounterInterface::class);
+        $counter->expects($this->once())->method('add')->with(1, $this->callback(
+            fn (array $labels) => ! isset($labels['key']) && ($labels['cache.store'] ?? null) === 'array'
+        ));
+        $service->metrics['cache_hit_total'] = $counter;
+
+        $service->registerCacheEventListeners();
+
+        Event::dispatch(new CacheHit('array', 'user:42', 'cached-value'));
     }
 
     public function test_middleware_passes_through_without_meter(): void

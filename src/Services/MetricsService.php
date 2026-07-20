@@ -2,8 +2,13 @@
 
 namespace Laratel\Opentelemetry\Services;
 
+use Illuminate\Cache\Events\CacheHit;
+use Illuminate\Cache\Events\CacheMissed;
+use Illuminate\Cache\Events\KeyForgotten;
+use Illuminate\Cache\Events\KeyWritten;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use OpenTelemetry\API\Metrics\MeterInterface;
 use Symfony\Component\HttpFoundation\Response;
@@ -69,9 +74,18 @@ class MetricsService
         ];
     }
 
+    /**
+     * Count cache operations via Laravel's cache events.
+     * Labels deliberately exclude the cache key (unbounded cardinality).
+     */
     public function registerCacheEventListeners(): void
     {
-        // Implemented in the cache-metrics task.
+        $labels = fn (object $event): array => ['cache.store' => $event->storeName ?? 'default'];
+
+        Event::listen(CacheHit::class, fn (CacheHit $e) => $this->metrics['cache_hit_total']->add(1, $labels($e)));
+        Event::listen(CacheMissed::class, fn (CacheMissed $e) => $this->metrics['cache_miss_total']->add(1, $labels($e)));
+        Event::listen(KeyWritten::class, fn (KeyWritten $e) => $this->metrics['cache_store_total']->add(1, $labels($e)));
+        Event::listen(KeyForgotten::class, fn (KeyForgotten $e) => $this->metrics['cache_delete_total']->add(1, $labels($e)));
     }
 
     /**
