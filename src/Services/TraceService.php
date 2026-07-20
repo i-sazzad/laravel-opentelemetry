@@ -17,11 +17,11 @@ class TraceService
 
     private static bool $listenerRegistered = false;
 
-    private static ?string $exclusionPattern = null;
+    private ?string $exclusionPattern = null;
 
-    public function __construct()
+    public function __construct(?TracerInterface $tracer = null)
     {
-        $this->tracer = app()->bound('tracer') ? app('tracer') : null;
+        $this->tracer = $tracer ?? (app()->bound('tracer') ? app('tracer') : null);
     }
 
     public function getTracer(): ?TracerInterface
@@ -98,9 +98,10 @@ class TraceService
     }
 
     /**
-     * Exclude certain queries from tracing (based on config).
+     * Exclude certain queries from tracing. Config values are plain,
+     * case-insensitive substrings (not regexes).
      */
-    private function shouldExcludeQuery(string $sql): bool
+    public function shouldExcludeQuery(string $sql): bool
     {
         $excludedQueries = config('opentelemetry.excluded_queries');
 
@@ -108,12 +109,12 @@ class TraceService
             return false;
         }
 
-        if (self::$exclusionPattern === null) {
+        if ($this->exclusionPattern === null) {
             $patterns = array_map(fn ($q) => preg_quote($q, '/'), $excludedQueries);
-            self::$exclusionPattern = '/('.implode('|', $patterns).')/i';
+            $this->exclusionPattern = '/('.implode('|', $patterns).')/i';
         }
 
-        return (bool) preg_match(self::$exclusionPattern, $sql);
+        return (bool) preg_match($this->exclusionPattern, $sql);
     }
 
     /**

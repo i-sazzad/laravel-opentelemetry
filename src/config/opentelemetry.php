@@ -47,10 +47,10 @@ return [
         'status',
     ],
 
-    // === Query Exclusions ===
+    // === Query Exclusions (plain case-insensitive substrings) ===
     'excluded_queries' => [
-        '/select\s+\*\s+from\s+`contact_setting`/i',
-        '/update\s+`logs`/i',
+        '`contact_setting`',
+        'update `logs`',
     ],
 
     // === System Paths for Metrics ===
