@@ -149,5 +149,9 @@ class OpenTelemetryServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../config/opentelemetry.php' => config_path('opentelemetry.php'),
         ], 'opentelemetry-config');
+
+        $router = $this->app['router'];
+        $router->aliasMiddleware('opentelemetry.trace', \Laratel\Opentelemetry\Middleware\OpenTelemetryTraceMiddleware::class);
+        $router->aliasMiddleware('opentelemetry.metrics', \Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware::class);
     }
 }
