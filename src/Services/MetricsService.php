@@ -120,38 +120,41 @@ class MetricsService
     }
 
     /**
-     * Record system-level metrics (CPU, memory, disk)
+     * Record system-level metrics. CPU is reported as time deltas since
+     * the previous reading (a counter must receive deltas, and /proc/stat
+     * exposes cumulative USER_HZ ticks — 100 per second on Linux).
      */
     public function recordSystemMetrics(): void
     {
-        $cpu = $this->getCpuStats();
-        foreach ($cpu as $state => $value) {
-            $this->metrics['system_cpu_time_seconds_total']->add($value, [
-                'state' => $state, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-            ]);
+        if (! config('opentelemetry.system_metrics_enabled', true)) {
+            return;
         }
 
-        $mem = $this->getMemoryInfo();
-        foreach ($mem as $key => $value) {
-            $this->metrics['system_memory_usage_bytes']->record($value, [
-                'type' => $key, 'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-            ]);
+        $cpu = $this->getCpuStats();
+        if ($cpu !== []) {
+            if (self::$previousCpu !== []) {
+                foreach ($cpu as $state => $ticks) {
+                    $delta = $ticks - (self::$previousCpu[$state] ?? 0);
+                    if ($delta > 0) {
+                        $this->metrics['system_cpu_time_seconds_total']->add($delta / 100, ['state' => $state]);
+                    }
+                }
+            }
+            self::$previousCpu = $cpu;
+        }
+
+        foreach ($this->getMemoryInfo() as $type => $bytes) {
+            $this->metrics['system_memory_usage_bytes']->record($bytes, ['type' => $type]);
         }
 
         $path = config('opentelemetry.disk_path');
         $total = @disk_total_space($path);
         $free = @disk_free_space($path);
-        $used = $total - $free;
-
-        $this->metrics['system_disk_total_bytes']->record($total, [
-            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-        ]);
-        $this->metrics['system_disk_free_bytes']->record($free, [
-            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-        ]);
-        $this->metrics['system_disk_usage_bytes']->record($used, [
-            'host' => gethostname(), 'service.name' => config('opentelemetry.service_name'),
-        ]);
+        if ($total !== false && $free !== false) {
+            $this->metrics['system_disk_total_bytes']->record($total);
+            $this->metrics['system_disk_free_bytes']->record($free);
+            $this->metrics['system_disk_usage_bytes']->record($total - $free);
+        }
     }
 
     /**

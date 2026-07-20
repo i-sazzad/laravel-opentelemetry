@@ -31,6 +31,7 @@ return [
     // === Optional Flags ===
     'enable_reachability_check' => env('OTEL_ENABLE_REACHABILITY_CHECK', true),
     'reachability_timeout' => (float) env('OTEL_REACHABILITY_TIMEOUT', 0.1),
+    'system_metrics_enabled' => env('OTEL_SYSTEM_METRICS_ENABLED', true),
 
     // === Route Exclusions ===
     'excluded_routes' => [
