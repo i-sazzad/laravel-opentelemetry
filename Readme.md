@@ -4,146 +4,144 @@
 [![Total Downloads](https://img.shields.io/packagist/dt/laratel/opentelemetry.svg?style=flat&color=green)](https://packagist.org/packages/laratel/opentelemetry)
 [![Tests](https://github.com/i-sazzad/laravel-opentelemetry/actions/workflows/tests.yml/badge.svg)](https://github.com/i-sazzad/laravel-opentelemetry/actions/workflows/tests.yml)
 
-**OpenTelemetry Laravel** integrates OpenTelemetry into Laravel: automatic HTTP request tracing with W3C trace-context propagation, database query tracing, low-cardinality metrics for HTTP/database/cache/system resources, and OTLP log export with trace correlation.
+Traces, metrics, and logs for Laravel over OTLP: HTTP request tracing with W3C trace-context propagation, database query spans, low-cardinality metrics for HTTP, database, cache, errors and system resources, and a log channel that correlates log records with the active trace.
+
+It is built to stay out of your application's way: telemetry is exported after the response has been sent, and a collector that is down, slow, or misconfigured pauses telemetry instead of slowing down or breaking requests.
+
+## Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [When the collector is down](#when-the-collector-is-down)
+- [PHP-FPM, Octane, and metric temporality](#php-fpm-octane-and-metric-temporality)
+- [Exported telemetry](#exported-telemetry)
+- [Troubleshooting](#troubleshooting)
+- [Upgrading from v1](#upgrading-from-v1)
+- [Related tools](#related-tools)
+- [Development & contributing](#development--contributing)
 
 ---
 
 ## Features
 
-- **Distributed tracing** — incoming `traceparent` headers continue the caller's trace (W3C trace context), and every response carries `trace-id` / `span-id` headers for correlation.
-- **Automatic HTTP request tracing** with OTel semantic-convention attributes and route-template span names (`GET /api/users/{id}`).
-- **Automatic database query tracing** with the SQL statement, connection, and execution time.
-- **Metrics** for HTTP requests, database queries, cache operations (via Laravel cache events), errors, and Linux system resources — all with bounded, low-cardinality labels.
-- **Efficient export** — spans are batched (`BatchSpanProcessor`) and everything is exported after the response has been sent, so telemetry adds no request latency.
+- **Distributed tracing** — an incoming `traceparent` header continues the caller's trace (W3C trace context); every traced response carries `trace-id` / `span-id` headers.
+- **HTTP request spans** with OTel semantic-convention attributes and route-template names (`GET /api/users/{id}`).
+- **Database query spans** as children of the request span, with driver, database, and SQL statement.
+- **Metrics** for HTTP requests, database queries, cache operations, errors, and Linux system resources — all with bounded, low-cardinality labels.
+- **Log channel** that ships records over OTLP with the active trace and span IDs attached.
+- **No request latency** — spans are batched and everything is exported when the application terminates, after the response has been sent.
+- **Safe when the collector is down** — short export timeouts and a circuit breaker with a cool-down; see [When the collector is down](#when-the-collector-is-down).
 - **One shared resource** — traces, metrics, and logs all carry `service.name`, `service.namespace`, `service.version`, and `deployment.environment`.
-- **Graceful degradation** — if the collector is unreachable, slow, or dies mid-flight, telemetry pauses itself (circuit breaker with a cool-down) instead of slowing down or breaking your app.
-- Middleware aliases registered automatically; publishable, env-driven configuration.
-
-See [CHANGELOG.md](CHANGELOG.md) for what changed in v2.0, including breaking label renames.
+- Works under PHP-FPM and Octane; middleware aliases are registered automatically; configuration is env-driven and publishable.
 
 ---
 
 ## Requirements
 
-- PHP >= 8.2
-- Laravel 10, 11, 12 or 13 (Laravel 13 itself needs PHP 8.3)
-- Dependencies:
-    - `open-telemetry/exporter-otlp` ^1.1
-    - `open-telemetry/sdk` ^1.1
-    - `open-telemetry/transport-grpc` ^1.1 + `ext-grpc` — only for the `grpc` protocol
+- PHP 8.2 or newer
+- Laravel 10, 11, 12, or 13 (Laravel 13 itself requires PHP 8.3)
+- An OTLP endpoint, e.g. the [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
+- For the `grpc` protocol only: `ext-grpc` and `open-telemetry/transport-grpc`
 
 ---
 
-## Installation
+## Quick start
 
-### 1. Install via Composer
+**1. Install**
 
 ```bash
 composer require laratel/opentelemetry
 ```
 
-The default OTLP/HTTP transport needs nothing else. To export over **gRPC**, install the `grpc` PHP extension and the transport package:
+The service provider is auto-discovered.
+
+**2. Point it at your collector** in `.env`
+
+```env
+OTEL_SERVICE_NAME=my-app
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+**3. Add the middleware** to the routes you want instrumented
+
+```php
+Route::middleware(['opentelemetry.metrics', 'opentelemetry.trace'])->group(function () {
+    Route::get('api/example', fn () => response()->json(['message' => 'Tracing and metrics enabled']));
+});
+```
+
+That is all that is needed for traces and metrics. For logs, add the [log channel](#logging).
+
+### Exporting over gRPC
+
+The default transport is OTLP over HTTP and needs nothing else. To use gRPC, install the `grpc` PHP extension and the transport package, then switch the protocol:
 
 ```bash
 composer require open-telemetry/transport-grpc
 ```
 
-### 2. Register the Service Provider (optional)
-
-The provider is auto-discovered. To register it manually, add it to `config/app.php`:
-
-```php
-'providers' => [
-    // Other Service Providers...
-    Laratel\Opentelemetry\Providers\OpenTelemetryServiceProvider::class,
-],
+```env
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
-### 3. Publish the Configuration File
+### Publishing the config file
+
+Optional — only needed to change the excluded routes/queries or the system-metric paths, which have no environment variable:
 
 ```bash
-php artisan vendor:publish --provider="Laratel\Opentelemetry\Providers\OpenTelemetryServiceProvider"
+php artisan vendor:publish --tag=opentelemetry-config
 ```
-
-This creates `config/opentelemetry.php`. Update the settings as needed, such as the OTLP endpoint, excluded routes, and system-metrics paths.
 
 ---
 
 ## Configuration
 
-### `config/opentelemetry.php`
+Every setting below lives in `config/opentelemetry.php`.
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OTEL_ENABLED` | `true` | Master switch. `false` makes the package a no-op: no probe, no exporters. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http` | `http` (same as `http/json`), `http/protobuf`, or `grpc`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | Base URL of the collector, without a `/v1/...` path (`http://localhost:4317` when the protocol is `grpc`). Without a port, the scheme default (80 / 443) is used. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | — | Extra headers for every export, as `key1=value1,key2=value2` — e.g. an auth token for a hosted backend. |
+| `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` | `delta` | `delta` or `cumulative`. See [metric temporality](#php-fpm-octane-and-metric-temporality). |
+| `OTEL_SERVICE_NAME` | `laravel_app` | `service.name` resource attribute. |
+| `OTEL_SERVICE_NAMESPACE` | `laratel` | `service.namespace` resource attribute. |
+| `OTEL_SERVICE_VERSION` | `1.0.0` | `service.version` resource attribute. |
+| `OTEL_ENABLE_REACHABILITY_CHECK` | `true` | Probe the endpoint (a TCP connect) before wiring telemetry up, and stay disabled if it is down. |
+| `OTEL_REACHABILITY_TIMEOUT` | `0.1` | Probe timeout, in seconds. |
+| `OTEL_EXPORT_TIMEOUT` | `3` | Seconds a single export may take. |
+| `OTEL_EXPORT_RETRIES` | `0` | Retries for a failed export. |
+| `OTEL_RETRY_AFTER` | `30` | Seconds telemetry stays paused after a failed probe or export. |
+| `OTEL_SYSTEM_METRICS_ENABLED` | `true` | Collect CPU, memory, disk, and network metrics (reads `/proc`; Linux only). |
+| `OTEL_STATE_PATH` | `storage/framework/cache/otel-system-metrics.json` | Small state file shared between requests. Set it empty to keep state in memory only. |
+
+`deployment.environment` is taken from `APP_ENV`.
+
+### Settings in the published config file
 
 | Key | Default | Purpose |
 |---|---|---|
-| `enabled` | `true` | Master switch; `false` makes the package a no-op. |
-| `protocol` | `http` | OTLP transport: `http` (= `http/json`), `http/protobuf`, or `grpc` (needs `ext-grpc` and `open-telemetry/transport-grpc`). |
-| `endpoint` | `http://localhost:4318` | OTLP collector endpoint (`4317` when protocol is `grpc`). |
-| `headers` | — | Extra headers sent with every export (`key1=value1,key2=value2` or an array), e.g. an auth token. |
-| `metrics_temporality` | `delta` | `delta` or `cumulative` — see [Metric temporality](#metric-temporality). |
-| `service_name` / `service_namespace` / `service_version` | `laravel_app` / `laratel` / `1.0.0` | Resource attributes attached to every exported trace, metric, and log. |
-| `enable_reachability_check` | `true` | Probe the collector on boot and disable telemetry if it is down. |
-| `reachability_timeout` | `0.1` | Probe timeout in seconds. |
-| `export_timeout` | `3.0` | Seconds a single export may take. |
-| `export_retries` | `0` | Retries for a failed export. |
-| `retry_after` | `30` | Seconds telemetry stays paused after a failed probe or export — see [When the collector is down](#when-the-collector-is-down). |
-| `system_metrics_enabled` | `true` | Toggles CPU/memory/disk/network collection (reads `/proc`, Linux only). |
-| `excluded_routes` | assets, health checks, … | Paths (with `*` wildcards) skipped by both middleware. |
-| `excluded_queries` | — | Plain, **case-insensitive substrings**; any query containing one is not traced. |
-| `state_path` | `storage/framework/cache/otel-system-metrics.json` | Small state file shared between requests: previous CPU/network counter readings and the collector-down marker. `null` keeps state in memory only. |
-| `cpu_path`, `memory_path`, `disk_path`, `network_path`, `connection_path` | `/proc/...`, `/` | Source paths for system metrics. |
+| `excluded_routes` | `assets/*`, `uploads/*`, `css/*`, `js/*`, `images/*`, `fonts/*`, `metrics`, `favicon.ico`, `api/health`, `healthz`, `status` | Request paths, with `*` wildcards, skipped by both middleware. |
+| `excluded_queries` | `` `contact_setting` ``, ``update `logs` `` | Plain, case-insensitive substrings. A query containing one gets no span. Replace these with your own. |
+| `headers` | from env | May also be an array: `['x-api-key' => '...']`. |
+| `cpu_path`, `memory_path`, `network_path`, `connection_path` | `/proc/stat`, `/proc/meminfo`, `/proc/net/dev`, `/proc/net/tcp` | Sources for system metrics. |
+| `disk_path` | `/` | Filesystem whose capacity is reported. |
 
-### Environment Variables
+### The state file
 
-```env
-OTEL_ENABLED=true
-OTEL_SERVICE_NAME=your_service_name
-OTEL_SERVICE_NAMESPACE=your_namespace
-OTEL_SERVICE_VERSION=1.0.0
-OTEL_EXPORTER_OTLP_PROTOCOL=http
-OTEL_EXPORTER_OTLP_ENDPOINT=http://your_otel_collector:4318
-OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer your-token"
-OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta
-OTEL_ENABLE_REACHABILITY_CHECK=true
-OTEL_REACHABILITY_TIMEOUT=0.1
-OTEL_EXPORT_TIMEOUT=3
-OTEL_EXPORT_RETRIES=0
-OTEL_RETRY_AFTER=30
-OTEL_SYSTEM_METRICS_ENABLED=true
-```
+`state_path` holds two small pieces of information that must survive from one request to the next, because under PHP-FPM every request is a new process:
 
-If the endpoint URL has no port, the scheme default (80 / 443) is used — both for exporting and for the reachability probe.
+- the previous CPU and network counter readings, so the next request can report the difference;
+- the "collector is down" marker used by the circuit breaker.
 
-### When the collector is down
-
-Telemetry must never cost you a request. If the endpoint cannot be reached, refuses connections, or accepts them and never answers:
-
-- the first failed probe or export marks the collector **down for `retry_after` seconds** and logs one warning (`[OTEL] … Telemetry is paused for 30s.`);
-- while it is down, requests do not probe, do not export, and do not log again — spans, metrics and log records produced in that window are dropped;
-- after the cool-down the next request tries again, and telemetry resumes on its own once the collector is back.
-
-A single export is bounded by `export_timeout` (3 seconds by default) and runs after the response has been sent. The down marker is kept in `state_path`, so under PHP-FPM all workers share it.
-
-Under Octane (or any long-lived worker), a collector that was down **when the worker booted** is picked up again when the workers are reloaded.
-
-### Metric temporality
-
-Metrics are exported with **delta** temporality by default. Under PHP-FPM every request runs in a fresh process, so a *cumulative* counter would restart from zero on each request and never grow; deltas are correct for both FPM and long-lived workers. Make sure your pipeline accepts delta metrics (the OpenTelemetry Collector's `prometheus` exporter does; Prometheus's own OTLP endpoint needs delta support enabled). If it cannot, and you run a long-lived runtime such as Octane, set `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative`.
-
-The system counters (`laratel_system_cpu_time_seconds_total` and the network counters) are differences between two readings of `/proc`. The previous reading is kept in `state_path` under a file lock, so they work under PHP-FPM too and each interval is reported by exactly one request.
-
-### Log Channel Configuration
-
-Add an `otel` channel to `config/logging.php` to ship logs over OTLP with trace correlation:
-
-```php
-'otel' => [
-    'driver' => 'custom',
-    'via' => Laratel\Opentelemetry\Logger\OtelLoggerFactory::class,
-    'level' => 'debug',
-],
-```
-
-Records below `level` are not exported.
+It is read and written under a file lock. The default location is inside Laravel's `storage` directory, which is already writable by the web server. If the file cannot be written, state falls back to memory for the current process.
 
 ---
 
@@ -151,24 +149,14 @@ Records below `level` are not exported.
 
 ### Middleware
 
-The package provides two middleware:
+| Alias | Class | What it does |
+|---|---|---|
+| `opentelemetry.trace` | `OpenTelemetryTraceMiddleware` | Creates a server span per request, continues an incoming `traceparent`, and traces database queries. |
+| `opentelemetry.metrics` | `OpenTelemetryMetricsMiddleware` | Records HTTP, database, cache, error, and system metrics. |
 
-1. **`opentelemetry.trace`** — creates a server span per request (continuing any incoming `traceparent`) and traces database queries.
-2. **`opentelemetry.metrics`** — records HTTP, database, cache, error, and system metrics.
+Both aliases are registered by the service provider, so they can be used on routes directly, as in the [quick start](#quick-start).
 
-Both aliases are **registered automatically** by the service provider, so route usage needs no Kernel changes:
-
-```php
-Route::middleware(['opentelemetry.metrics', 'opentelemetry.trace'])->group(function () {
-    Route::get('api/example', function () {
-        return response()->json(['message' => 'Tracing and metrics enabled']);
-    });
-});
-```
-
-Telemetry is exported when the application terminates, i.e. **after** the response has been sent, so it adds no latency to the request.
-
-To instrument **every** request, register them globally — in `bootstrap/app.php` on Laravel 11+:
+To instrument **every** request, register them globally. On Laravel 11 and newer, in `bootstrap/app.php`:
 
 ```php
 ->withMiddleware(function (Middleware $middleware) {
@@ -179,7 +167,7 @@ To instrument **every** request, register them globally — in `bootstrap/app.ph
 })
 ```
 
-or in `app/Http/Kernel.php` on Laravel 10:
+On Laravel 10, in `app/Http/Kernel.php`:
 
 ```php
 protected $middleware = [
@@ -188,42 +176,61 @@ protected $middleware = [
 ];
 ```
 
-### Distributed Tracing
+Applying a middleware both globally and on a route is harmless: the request is only instrumented once.
 
-When an upstream service (or the browser instrumentation) sends a W3C `traceparent` header, the request span joins that trace instead of starting a new one — so a request that crosses several services produces **one** connected trace.
+Paths matching `excluded_routes` pass straight through.
 
-Every traced response also includes the identifiers for correlation:
+### Distributed tracing
+
+When an upstream service (or browser instrumentation) sends a W3C `traceparent` header, the request span joins that trace instead of starting a new one, so a request that crosses several services produces one connected trace.
+
+Every traced response includes the identifiers, which is handy for support tickets and log searches:
 
 ```
 trace-id: 0af7651916cd43dd8448eb211c80319c
 span-id:  b7ad6b7169203331
 ```
 
+### Database query tracing
+
+Queries that run inside a traced request — or inside any span you started yourself — get a child span. No setup is needed beyond the trace middleware.
+
+- Spans are `CLIENT` spans named after the SQL operation: `select`, `insert`, `update`, … and `other` for anything unrecognised.
+- Attributes: `db.system` (driver), `db.name` (database), `db.statement` (the SQL, with placeholders — bindings are not recorded).
+- Queries outside any span (console commands, queued jobs, excluded routes) are not traced, so they never appear as orphan root spans.
+- Silence noisy queries with `excluded_queries`.
+
 ### Logging
 
-Use the `otel` log channel for logs with trace context:
+Add a channel to `config/logging.php`:
+
+```php
+'otel' => [
+    'driver' => 'custom',
+    'via' => Laratel\Opentelemetry\Logger\OtelLoggerFactory::class,
+    'level' => 'debug',
+],
+```
+
+Then use it directly, or add it to your `stack` channel so every log line is shipped:
 
 ```php
 use Illuminate\Support\Facades\Log;
 
-Log::channel('otel')->info('Test log for OpenTelemetry collector', ['user' => 'example']);
+Log::channel('otel')->info('Order placed', ['order_id' => 1234]);
 ```
 
-Logs carry the active trace/span IDs and are batched to the configured collector. Severity numbers follow the OpenTelemetry Logs specification.
+- Records carry the active trace and span IDs, so your backend can jump from a log line to its trace.
+- Records below the channel's `level` are not exported.
+- Context values are exported as attributes. Scalars and arrays are kept as they are; dates become ISO-8601 strings, enums their value, `Stringable` objects their string form, and other objects their class name.
+- An `exception` in the context is exported as `exception.type`, `exception.message`, and `exception.stacktrace`.
+- Severity numbers follow the OpenTelemetry Logs specification.
 
-### Automatic Query Tracing
+It is safe to make `otel` the default channel: when the collector is unreachable the channel discards records instead of failing.
 
-Database queries that run inside a traced request (or inside any span you started yourself) are traced automatically once the trace middleware has run. Spans are `CLIENT` spans named after the SQL operation (`select`, `update`, …; `other` for anything unrecognised) and include:
+### Custom spans
 
-- `db.system` — the database driver
-- `db.name` — the database name
-- `db.statement` — the full SQL statement
-
-Exclude noisy queries via `excluded_queries` in `config/opentelemetry.php`.
-
-### Custom Instrumentation
-
-Use the `TraceService` to create custom spans (resolve it from the container — it is a singleton):
+Resolve the `TraceService` from the container and use the tracer:
 
 ```php
 use Laratel\Opentelemetry\Services\TraceService;
@@ -231,14 +238,24 @@ use Laratel\Opentelemetry\Services\TraceService;
 $tracer = app(TraceService::class)->getTracer();
 
 if ($tracer) {
-    $span = $tracer->spanBuilder('custom-operation')->startSpan();
-    $span->setAttribute('custom.attribute', 'value');
-    // Perform some operation
-    $span->end();
+    $span = $tracer->spanBuilder('generate-invoice')->startSpan();
+    $scope = $span->activate();
+
+    try {
+        $span->setAttribute('invoice.id', $invoice->id);
+        // ... work; queries run here become children of this span
+    } finally {
+        $scope->detach();
+        $span->end();
+    }
 }
 ```
 
-Outside an HTTP request (a console command, a queued job), flush when you are done if the process does not terminate the application itself:
+`getTracer()` returns `null` when telemetry is disabled or the collector was unreachable — keep the guard so your code runs everywhere.
+
+### Console commands and queued jobs
+
+Telemetry is exported when the application terminates. An HTTP request and an Artisan command both do that on their own. A long-running process that does not — a queue worker handling many jobs, for instance — should flush explicitly when a unit of work is done:
 
 ```php
 use Laratel\Opentelemetry\Providers\OpenTelemetryServiceProvider;
@@ -246,70 +263,184 @@ use Laratel\Opentelemetry\Providers\OpenTelemetryServiceProvider;
 OpenTelemetryServiceProvider::flush(app());
 ```
 
-`getTracer()` returns `null` when telemetry is disabled (e.g. collector unreachable) — guard for it so your code runs everywhere.
+---
+
+## When the collector is down
+
+Telemetry must never cost you a request. If the endpoint cannot be reached, refuses connections, or accepts them and never answers:
+
+1. The first failed probe or export marks the collector **down for `OTEL_RETRY_AFTER` seconds** (30 by default) and writes one warning to your application log:
+
+   ```
+   [OTEL] OTLP endpoint unreachable: localhost:4318. Telemetry is paused for 30s.
+   ```
+
+2. While it is down, requests do not probe, do not export, and do not log the warning again. Spans, metrics, and log records produced in that window are dropped.
+3. After the cool-down the next request tries again, and telemetry resumes on its own once the collector is back.
+
+A single export is bounded by `OTEL_EXPORT_TIMEOUT` (3 seconds by default) and runs after the response has been sent, so even the one request that discovers the outage is not held up for long. The down marker lives in the [state file](#the-state-file), so all PHP-FPM workers share it.
+
+**Octane and other long-lived workers:** if the collector was down when a worker booted, that worker stays disabled until it is reloaded (`php artisan octane:reload`). A collector that goes down and comes back while workers are running is handled by the cool-down as described above.
+
+To turn the startup probe off — for example when the collector sits behind a proxy that always accepts connections — set `OTEL_ENABLE_REACHABILITY_CHECK=false`. Failed exports still trip the breaker.
 
 ---
 
-## Exported Metrics
+## PHP-FPM, Octane, and metric temporality
 
-All metrics carry `service.name` etc. as OTLP **resource** attributes (not per-metric labels). Labels are deliberately low-cardinality: route templates instead of raw paths, SQL operations instead of SQL text, exception classes instead of messages, and no cache keys.
+Under PHP-FPM every request runs in a fresh process and exports its own metrics. That shapes two defaults.
 
-#### HTTP Metrics — labels: `http.request.method`, `http.route`, `http.response.status_code`
-- laratel_http_request_total
-- laratel_http_status_code_total
-- laratel_http_failed_requests_total (extra label: `error.type`)
-- laratel_http_request_latency_seconds
-- laratel_http_request_size_bytes
-- laratel_http_response_size_bytes
-- laratel_http_requests_in_progress (UpDownCounter)
+**Metrics are exported with delta temporality.** A *cumulative* counter would restart from zero on every request and never grow; deltas are correct for both PHP-FPM and long-lived workers. Your pipeline has to accept delta metrics:
 
-#### System Metrics (Linux only)
-- laratel_system_cpu_time_seconds_total — per-`state` time deltas in seconds
-- laratel_system_memory_usage_bytes (Gauge) — per `type`
-- laratel_system_disk_total_bytes (Gauge)
-- laratel_system_disk_free_bytes (Gauge)
-- laratel_system_disk_usage_bytes (Gauge)
+- The OpenTelemetry Collector's `prometheus` exporter accumulates deltas into the cumulative series Prometheus expects.
+- If you send OTLP straight to Prometheus, delta ingestion has to be enabled there.
+- If your backend cannot take deltas and you run a long-lived runtime such as Octane, set `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative`.
 
-#### Network Metrics — labels: `network.interface`, `network.io.direction`
-- laratel_system_network_io_bytes_total — per-direction byte deltas
-- laratel_system_network_dropped_total
-- laratel_system_network_errors_total
-- laratel_active_network_connections (Gauge) — per TCP `network.state`
-
-#### Database Metrics — labels: `db.operation`, `db.connection`
-- laratel_db_query_total
-- laratel_db_query_latency_seconds
-
-#### Cache Metrics — label: `cache.store`
-- laratel_cache_hit_total
-- laratel_cache_miss_total
-- laratel_cache_store_total
-- laratel_cache_delete_total
-
-#### Error Metrics — label: `exception.type`
-- laratel_error_total — includes exceptions Laravel rendered as an error response
+**System counters are kept across requests.** CPU time and network I/O are differences between two readings of `/proc`. The previous reading is stored in the [state file](#the-state-file) under a lock, so each interval is reported by exactly one request no matter how many workers are running.
 
 ---
 
-## Repository for Related Tools and Configurations
+## Exported telemetry
 
-Find a complete repository containing a Docker Compose file and configuration for OpenTelemetry Collector, Prometheus, Tempo, Loki, Promtail and Grafana [here](https://github.com/i-sazzad/otel).
+All signals carry `service.name`, `service.namespace`, `service.version`, and `deployment.environment` as OTLP **resource** attributes, not as per-metric labels.
+
+### Request span
+
+Named `METHOD /route/template` (just the method when no route matched, so 404s do not create a span name per URL). Kind `SERVER`.
+
+| Attribute | Value |
+|---|---|
+| `http.request.method` | `GET`, `POST`, … |
+| `http.route` | Route template, e.g. `api/users/{id}` |
+| `http.response.status_code` | Status code |
+| `url.full` | Full URL including the query string |
+| `client.address` | Client IP |
+| `user_agent.original` | `User-Agent` header |
+| `http.request.body.size` / `http.response.body.size` | Sizes in bytes |
+| `http.server.duration_ms` | Request duration |
+| `laravel.route.name` / `laravel.controller.action` | Route name and action |
+| `enduser.id` | Authenticated user's identifier, when there is one |
+
+Responses with status 400 and above mark the span as an error. An exception that Laravel rendered as an error page is recorded on the span as an `exception` event.
+
+### Metrics
+
+Labels are deliberately low-cardinality: route templates instead of raw paths, SQL operations instead of SQL text, exception classes instead of messages, and no cache keys.
+
+**HTTP** — labels `http.request.method`, `http.route`, `http.response.status_code`
+
+| Metric | Type |
+|---|---|
+| `laratel_http_request_total` | Counter |
+| `laratel_http_status_code_total` | Counter |
+| `laratel_http_failed_requests_total` (extra label `error.type`: `client_error` / `server_error`) | Counter |
+| `laratel_http_request_latency_seconds` | Histogram |
+| `laratel_http_request_size_bytes` | Histogram |
+| `laratel_http_response_size_bytes` | Histogram |
+| `laratel_http_requests_in_progress` | UpDownCounter |
+
+**Database** — labels `db.operation`, `db.connection`
+
+| Metric | Type |
+|---|---|
+| `laratel_db_query_total` | Counter |
+| `laratel_db_query_latency_seconds` | Histogram |
+
+**Cache** — label `cache.store`
+
+| Metric | Type |
+|---|---|
+| `laratel_cache_hit_total` | Counter |
+| `laratel_cache_miss_total` | Counter |
+| `laratel_cache_store_total` | Counter |
+| `laratel_cache_delete_total` | Counter |
+
+**Errors** — label `exception.type`
+
+| Metric | Type |
+|---|---|
+| `laratel_error_total` — includes exceptions Laravel rendered as an error response | Counter |
+
+**System** (Linux only; disable with `OTEL_SYSTEM_METRICS_ENABLED=false`)
+
+| Metric | Type | Labels |
+|---|---|---|
+| `laratel_system_cpu_time_seconds_total` | Counter | `state`: `user`, `nice`, `system`, `idle`, `iowait`, `irq`, `softirq`, `steal` |
+| `laratel_system_memory_usage_bytes` | Gauge | `type`: `total`, `free`, `cached`, `buffers`, `used` |
+| `laratel_system_disk_total_bytes` | Gauge | — |
+| `laratel_system_disk_free_bytes` | Gauge | — |
+| `laratel_system_disk_usage_bytes` | Gauge | — |
+| `laratel_system_network_io_bytes_total` | Counter | `network.interface`, `network.io.direction` (`receive` / `transmit`) |
+| `laratel_system_network_errors_total` | Counter | `network.interface`, `network.io.direction` |
+| `laratel_system_network_dropped_total` | Counter | `network.interface`, `network.io.direction` |
+| `laratel_active_network_connections` | Gauge | `network.state`: `ESTABLISHED`, `LISTEN`, `TIME_WAIT`, … |
 
 ---
 
-## Development & Contributing
+## Troubleshooting
 
-Contributions are welcome! Please fork the repository, create a feature branch, and submit a pull request.
+**Nothing arrives at the collector.**
+Check your application log for an `[OTEL]` warning — it names the host and port that were tried and the reason. Then check that the middleware is applied to the route and the path is not in `excluded_routes`. `OTEL_EXPORTER_OTLP_ENDPOINT` must be the base URL; the package appends `/v1/traces`, `/v1/metrics`, and `/v1/logs` itself.
+
+**Traces arrive but metrics do not (or counters never increase).**
+Your pipeline is probably rejecting or mishandling delta metrics. See [metric temporality](#php-fpm-octane-and-metric-temporality).
+
+**Telemetry stops for a while after a collector restart.**
+That is the cool-down. It resumes within `OTEL_RETRY_AFTER` seconds; lower the value if 30 seconds is too long for you.
+
+**The collector is behind HTTPS or a load balancer and is reported as unreachable.**
+Include the port in the endpoint if it is not 443. Without a port, the scheme default is used for both the probe and the export.
+
+**gRPC is selected and telemetry is disabled.**
+The log will say that `ext-grpc` or `open-telemetry/transport-grpc` is missing. Install both, or switch to `http`.
+
+**CPU or network metrics are missing.**
+They need two readings, so the very first request after a deploy only stores a snapshot. They also need a writable `OTEL_STATE_PATH` under PHP-FPM and a readable `/proc` (Linux).
+
+**Turning it off quickly.**
+Set `OTEL_ENABLED=false`. The middleware can stay in place; it passes requests straight through.
+
+---
+
+## Upgrading from v1
+
+v2 renames metric labels and span attributes to the OpenTelemetry semantic conventions, changes several metric types, and removes a few metrics and config keys. Dashboards and alerts built on v1 need updating. The full list is in [CHANGELOG.md](CHANGELOG.md); the changes most likely to need action are:
+
+- Metrics default to **delta** temporality.
+- `http.route` is the route template, not the raw path; `http.method` → `http.request.method`; `http.status_code` → `http.response.status_code`.
+- Memory, disk, and connection-count metrics are **gauges**, not histograms.
+- `excluded_queries` entries are plain substrings, not regular expressions.
+- `open-telemetry/transport-grpc` is no longer installed automatically; gRPC users must require it.
+
+---
+
+## Related tools
+
+A ready-made Docker Compose stack with the OpenTelemetry Collector, Prometheus, Tempo, Loki, Promtail, and Grafana is available at [i-sazzad/otel](https://github.com/i-sazzad/otel).
+
+---
+
+## Development & contributing
+
+Contributions are welcome. Fork the repository, create a feature branch, and open a pull request.
 
 ```bash
-composer update --ignore-platform-req=ext-grpc   # the gRPC transport is a dev dependency
-
-composer test      # PHPUnit
-composer analyse   # PHPStan (level 5)
-composer format    # Laravel Pint
+composer update --ignore-platform-req=ext-grpc
 ```
 
-The CI workflow runs the same three checks on PHP 8.2–8.5.
+```bash
+composer test
+```
+
+```bash
+composer analyse
+```
+
+```bash
+composer format
+```
+
+The gRPC transport is a dev dependency, hence the platform flag on machines without `ext-grpc`. CI runs the tests (PHPUnit), static analysis (PHPStan level 5), and code style (Pint) on PHP 8.2 through 8.5.
 
 ---
 
