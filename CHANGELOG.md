@@ -4,7 +4,7 @@
 
 ### Breaking changes
 
-- **PHP >= 8.3 and Laravel >= 10 required.** Laravel 13 is supported; CI runs on PHP 8.3, 8.4 and 8.5.
+- **PHP >= 8.2 and Laravel >= 10 required** (the code already used PHP 8.2 syntax; composer.json now says so). Laravel 13 is supported; CI runs on PHP 8.2 through 8.5.
 - **`excluded_queries` config values are now plain case-insensitive substrings**, not regexes. Previously the shipped regex defaults never matched anything.
 - **Metric labels changed** (dashboards must be updated):
   - `service.name`, `host` / `net.host.name` labels removed from all metrics — they are now OTLP *resource* attributes on every export.

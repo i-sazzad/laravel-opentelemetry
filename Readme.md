@@ -25,8 +25,8 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed in v2.0, including breaking la
 
 ## Requirements
 
-- PHP >= 8.3
-- Laravel 10, 11, 12 or 13
+- PHP >= 8.2
+- Laravel 10, 11, 12 or 13 (Laravel 13 itself needs PHP 8.3)
 - Dependencies:
     - `open-telemetry/exporter-otlp` ^1.1
     - `open-telemetry/sdk` ^1.1
@@ -309,7 +309,7 @@ composer analyse   # PHPStan (level 5)
 composer format    # Laravel Pint
 ```
 
-The CI workflow runs the same three checks on PHP 8.3–8.5.
+The CI workflow runs the same three checks on PHP 8.2–8.5.
 
 ---
 
