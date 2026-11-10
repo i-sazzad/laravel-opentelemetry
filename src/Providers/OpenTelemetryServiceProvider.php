@@ -78,9 +78,9 @@ class OpenTelemetryServiceProvider extends ServiceProvider
     {
         $this->app->singleton(MeterProvider::class, function () {
             try {
-                $temporality = strtolower((string) config('opentelemetry.metrics_temporality', 'cumulative')) === 'delta'
-                    ? Temporality::DELTA
-                    : Temporality::CUMULATIVE;
+                $temporality = strtolower((string) config('opentelemetry.metrics_temporality', 'delta')) === 'cumulative'
+                    ? Temporality::CUMULATIVE
+                    : Temporality::DELTA;
 
                 $exporter = new MetricExporter(OtlpTransport::create(OtlpTransport::METRICS), $temporality);
 

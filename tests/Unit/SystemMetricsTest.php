@@ -3,6 +3,7 @@
 namespace Laratel\Opentelemetry\Tests\Unit;
 
 use Laratel\Opentelemetry\Services\MetricsService;
+use Laratel\Opentelemetry\Support\SnapshotStore;
 use Laratel\Opentelemetry\Tests\TestCase;
 use OpenTelemetry\API\Metrics\CounterInterface;
 use OpenTelemetry\API\Metrics\GaugeInterface;
@@ -16,8 +17,7 @@ class SystemMetricsTest extends TestCase
 
     protected function setUp(): void
     {
-        // Base TestCase already resets the static $previousCpu / $previousNetwork
-        // snapshots between tests — no extra reset needed here.
+        // Base TestCase resets the in-memory counter snapshots between tests.
         parent::setUp();
 
         $this->statFile = tempnam(sys_get_temp_dir(), 'otel-stat-');
@@ -176,6 +176,39 @@ class SystemMetricsTest extends TestCase
         $service->recordHostMetrics();
 
         $this->addToAssertionCount(1);
+    }
+
+    public function test_deltas_survive_across_processes_via_the_state_file(): void
+    {
+        $stateFile = tempnam(sys_get_temp_dir(), 'otel-state-');
+        config()->set('opentelemetry.state_path', $stateFile);
+        file_put_contents($this->statFile, "cpu  100 0 50 1000 0 0 0 0\n");
+
+        $this->makeService()->recordSystemMetrics(); // "request 1": snapshot only
+
+        // "Request 2" is a brand-new PHP-FPM process: no in-memory state.
+        SnapshotStore::reset();
+        file_put_contents($this->statFile, "cpu  150 0 50 1000 0 0 0 0\n");
+
+        $service = $this->makeService();
+        $calls = [];
+        $spy = $this->createMock(CounterInterface::class);
+        $spy->method('add')->willReturnCallback(function ($value, $labels) use (&$calls) {
+            $calls[$labels['state']] = $value;
+        });
+        $service->metrics['system_cpu_time_seconds_total'] = $spy;
+        $service->recordSystemMetrics();
+
+        $this->assertEquals(['user' => 0.5], $calls);
+        @unlink($stateFile);
+    }
+
+    public function test_unwritable_state_path_falls_back_to_memory(): void
+    {
+        config()->set('opentelemetry.state_path', '/nonexistent-dir/state.json');
+
+        $this->assertSame([], SnapshotStore::exchange('cpu', ['user' => 1]));
+        $this->assertSame(['user' => 1], SnapshotStore::exchange('cpu', ['user' => 2]));
     }
 
     public function test_disabled_flag_skips_everything(): void

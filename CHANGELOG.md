@@ -22,6 +22,8 @@
 - **Server span names** start as the bare HTTP method and are renamed to `METHOD /route/template` once the route is matched; unmatched requests (404s) no longer create one span name per URL.
 - **DB query spans** are only created inside an active span (no orphan root spans from console commands, queues, or excluded routes), are `CLIENT` spans, and unrecognised leading keywords are reported as `other`.
 - **The reachability probe uses the URL's default port** (80/443) when the endpoint has none, matching where the exporter actually connects, instead of assuming 4317/4318.
+- **Metrics are exported with delta temporality by default** (was the SDK's cumulative default). Under PHP-FPM cumulative counters restart at zero on every request and never grew. Set `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative` if your backend cannot ingest delta metrics and you run a long-lived runtime.
+- **`open-telemetry/transport-grpc` is no longer a hard dependency.** HTTP users no longer need `--ignore-platform-req=ext-grpc`; gRPC users must `composer require open-telemetry/transport-grpc`.
 - **Log severity numbers** now follow the OTel spec (DEBUG=5 … EMERGENCY=22). Log backends that filtered on the old numbers must be updated.
 
 ### Added
@@ -35,7 +37,8 @@
 - `system_metrics_enabled` flag.
 - `enabled` (`OTEL_ENABLED`) master switch.
 - `headers` (`OTEL_EXPORTER_OTLP_HEADERS`) for authenticated/hosted collectors.
-- `metrics_temporality` (`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`): `cumulative` (default) or `delta`.
+- `metrics_temporality` (`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`): `delta` (default) or `cumulative`.
+- `state_path` (`OTEL_STATE_PATH`): previous CPU/network counter readings are kept in a lock-protected file, so `laratel_system_cpu_time_seconds_total` and the network counters now produce values under PHP-FPM (they previously only worked in long-lived workers).
 - `http/json` and `http/protobuf` protocol values, alongside `http` and `grpc`.
 - The log channel honors its `level` option.
 - Exceptions handled by Laravel (rendered as error responses) are recorded on the request span and counted in `laratel_error_total`.

@@ -20,11 +20,12 @@ return [
     // backend. "key1=value1,key2=value2" or an array.
     'headers' => env('OTEL_EXPORTER_OTLP_HEADERS', ''),
 
-    // 'cumulative' or 'delta'. Under PHP-FPM every request is a fresh process
-    // whose counters restart at zero, so 'delta' is usually what you want
-    // there; keep 'cumulative' for long-lived workers (Octane) or backends
+    // 'delta' or 'cumulative'. Under PHP-FPM every request is a fresh process
+    // whose counters restart at zero, so cumulative values never grow there;
+    // 'delta' is correct for both FPM and long-lived workers. Switch to
+    // 'cumulative' only for a long-lived runtime (Octane) feeding a backend
     // that cannot ingest delta metrics.
-    'metrics_temporality' => env('OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE', 'cumulative'),
+    'metrics_temporality' => env('OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE', 'delta'),
 
     // === Service Metadata ===
     'service_name' => env('OTEL_SERVICE_NAME', 'laravel_app'),
@@ -56,6 +57,11 @@ return [
         '`contact_setting`',
         'update `logs`',
     ],
+
+    // Where the previous CPU/network counter readings are kept between
+    // requests, so deltas work under PHP-FPM (one process per request).
+    // null keeps them in memory only (enough for Octane).
+    'state_path' => env('OTEL_STATE_PATH', storage_path('framework/cache/otel-system-metrics.json')),
 
     // === System Paths for Metrics ===
     'cpu_path' => '/proc/stat',

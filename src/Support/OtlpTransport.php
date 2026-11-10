@@ -39,7 +39,7 @@ final class OtlpTransport
         $headers = self::headers();
 
         return match ($protocol) {
-            'grpc' => (new GrpcTransportFactory)->create(
+            'grpc' => self::grpcFactory()->create(
                 $endpoint.self::GRPC_METHODS[$signal],
                 'application/x-protobuf',
                 $headers
@@ -56,6 +56,18 @@ final class OtlpTransport
             ),
             default => throw new InvalidArgumentException("Unsupported OTLP protocol: {$protocol}"),
         };
+    }
+
+    private static function grpcFactory(): GrpcTransportFactory
+    {
+        if (! class_exists(GrpcTransportFactory::class) || ! extension_loaded('grpc')) {
+            throw new InvalidArgumentException(
+                'The grpc protocol needs ext-grpc and the open-telemetry/transport-grpc package '
+                .'(composer require open-telemetry/transport-grpc).'
+            );
+        }
+
+        return new GrpcTransportFactory;
     }
 
     /**

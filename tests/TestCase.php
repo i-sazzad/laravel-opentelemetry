@@ -7,6 +7,7 @@ use Laratel\Opentelemetry\Providers\OpenTelemetryServiceProvider;
 use Laratel\Opentelemetry\Services\MetricsService;
 use Laratel\Opentelemetry\Services\TraceService;
 use Laratel\Opentelemetry\Support\Reachability;
+use Laratel\Opentelemetry\Support\SnapshotStore;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
@@ -23,8 +24,7 @@ abstract class TestCase extends Orchestra
         [OtelLoggerFactory::class, 'loggerProvider', null],
         [TraceService::class, 'listeningOn', null],
         [MetricsService::class, 'listeningOn', null],
-        [MetricsService::class, 'previousCpu', []],
-        [MetricsService::class, 'previousNetwork', []],
+        [SnapshotStore::class, 'memory', []],
     ];
 
     protected function setUp(): void
@@ -61,5 +61,7 @@ abstract class TestCase extends Orchestra
         // Port 1 refuses connections immediately: fast, deterministic "collector down".
         $app['config']->set('opentelemetry.endpoint', 'http://127.0.0.1:1');
         $app['config']->set('opentelemetry.protocol', 'http');
+        // Keep counter snapshots in memory so tests never share a state file.
+        $app['config']->set('opentelemetry.state_path', null);
     }
 }

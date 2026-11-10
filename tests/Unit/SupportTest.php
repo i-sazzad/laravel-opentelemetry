@@ -54,6 +54,18 @@ class SupportTest extends TestCase
         OtlpTransport::create(OtlpTransport::TRACES);
     }
 
+    public function test_grpc_without_the_extension_fails_with_an_actionable_message(): void
+    {
+        if (extension_loaded('grpc')) {
+            $this->markTestSkipped('ext-grpc is installed.');
+        }
+
+        config()->set('opentelemetry.protocol', 'grpc');
+
+        $this->expectExceptionMessage('composer require open-telemetry/transport-grpc');
+        OtlpTransport::create(OtlpTransport::TRACES);
+    }
+
     public function test_http_protocol_variants_build_a_transport(): void
     {
         config()->set('opentelemetry.endpoint', 'http://127.0.0.1:1/');

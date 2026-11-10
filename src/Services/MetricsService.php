@@ -10,6 +10,7 @@ use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Laratel\Opentelemetry\Support\SnapshotStore;
 use Laratel\Opentelemetry\Support\Sql;
 use OpenTelemetry\API\Metrics\MeterInterface;
 use Symfony\Component\HttpFoundation\Response;
@@ -20,11 +21,6 @@ class MetricsService
     public array $metrics = [];
 
     private ?MeterInterface $meter;
-
-    /** Previous /proc snapshots for delta computation (persist per worker process). */
-    private static array $previousCpu = [];
-
-    private static array $previousNetwork = [];
 
     /** The event dispatcher the DB/cache listeners were registered on. */
     private static ?\WeakReference $listeningOn = null;
@@ -199,15 +195,15 @@ class MetricsService
 
         $cpu = $this->getCpuStats();
         if ($cpu !== []) {
-            if (self::$previousCpu !== []) {
+            $previousCpu = SnapshotStore::exchange('cpu', $cpu);
+            if ($previousCpu !== []) {
                 foreach ($cpu as $state => $ticks) {
-                    $delta = $ticks - (self::$previousCpu[$state] ?? 0);
+                    $delta = $ticks - (int) ($previousCpu[$state] ?? 0);
                     if ($delta > 0) {
                         $this->metrics['system_cpu_time_seconds_total']->add($delta / 100, ['state' => $state]);
                     }
                 }
             }
-            self::$previousCpu = $cpu;
         }
 
         foreach ($this->getMemoryInfo() as $type => $bytes) {
@@ -317,46 +313,65 @@ class MetricsService
             return;
         }
 
-        $networkPath = config('opentelemetry.network_path');
-        if (is_string($networkPath) && is_readable($networkPath)) {
-            foreach (@file($networkPath) ?: [] as $line) {
-                // Interface names may contain "-", "." and "@" (br-1a2b, eth0.100, veth@if7).
-                if (! preg_match('/^\s*([^\s:]+):\s*(.+)$/', $line, $m)) {
-                    continue;
-                }
+        $current = $this->getNetworkStats();
+        if ($current !== []) {
+            $previous = SnapshotStore::exchange('network', $current);
 
-                $iface = $m[1];
-                $fields = preg_split('/\s+/', trim($m[2]));
-
-                $current = [
-                    'receive' => [
-                        'bytes' => (int) ($fields[0] ?? 0),
-                        'errors' => (int) ($fields[2] ?? 0),
-                        'dropped' => (int) ($fields[3] ?? 0),
-                    ],
-                    'transmit' => [
-                        'bytes' => (int) ($fields[8] ?? 0),
-                        'errors' => (int) ($fields[10] ?? 0),
-                        'dropped' => (int) ($fields[11] ?? 0),
-                    ],
-                ];
-
-                $previous = self::$previousNetwork[$iface] ?? null;
-                self::$previousNetwork[$iface] = $current;
-                if ($previous === null) {
+            foreach ($current as $iface => $counters) {
+                // First sighting of an interface: snapshot only.
+                if (! isset($previous[$iface])) {
                     continue;
                 }
 
                 foreach (['receive', 'transmit'] as $direction) {
                     $labels = ['network.interface' => $iface, 'network.io.direction' => $direction];
-                    $this->addCounterDelta('system_network_io_bytes_total', $current[$direction]['bytes'] - $previous[$direction]['bytes'], $labels);
-                    $this->addCounterDelta('system_network_errors_total', $current[$direction]['errors'] - $previous[$direction]['errors'], $labels);
-                    $this->addCounterDelta('system_network_dropped_total', $current[$direction]['dropped'] - $previous[$direction]['dropped'], $labels);
+                    $before = $previous[$iface][$direction] ?? [];
+                    $this->addCounterDelta('system_network_io_bytes_total', $counters[$direction]['bytes'] - (int) ($before['bytes'] ?? 0), $labels);
+                    $this->addCounterDelta('system_network_errors_total', $counters[$direction]['errors'] - (int) ($before['errors'] ?? 0), $labels);
+                    $this->addCounterDelta('system_network_dropped_total', $counters[$direction]['dropped'] - (int) ($before['dropped'] ?? 0), $labels);
                 }
             }
         }
 
         $this->recordTcpConnectionStates();
+    }
+
+    /**
+     * Cumulative per-interface counters from /proc/net/dev.
+     *
+     * @return array<string, array{receive: array<string, int>, transmit: array<string, int>}>
+     */
+    private function getNetworkStats(): array
+    {
+        $networkPath = config('opentelemetry.network_path');
+        if (! is_string($networkPath) || ! is_readable($networkPath)) {
+            return [];
+        }
+
+        $stats = [];
+        foreach (@file($networkPath) ?: [] as $line) {
+            // Interface names may contain "-", "." and "@" (br-1a2b, eth0.100, veth@if7).
+            if (! preg_match('/^\s*([^\s:]+):\s*(.+)$/', $line, $m)) {
+                continue;
+            }
+
+            $fields = preg_split('/\s+/', trim($m[2])) ?: [];
+
+            $stats[$m[1]] = [
+                'receive' => [
+                    'bytes' => (int) ($fields[0] ?? 0),
+                    'errors' => (int) ($fields[2] ?? 0),
+                    'dropped' => (int) ($fields[3] ?? 0),
+                ],
+                'transmit' => [
+                    'bytes' => (int) ($fields[8] ?? 0),
+                    'errors' => (int) ($fields[10] ?? 0),
+                    'dropped' => (int) ($fields[11] ?? 0),
+                ],
+            ];
+        }
+
+        return $stats;
     }
 
     private function addCounterDelta(string $metric, int $delta, array $labels): void

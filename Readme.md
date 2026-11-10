@@ -30,7 +30,7 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed in v2.0, including breaking la
 - Dependencies:
     - `open-telemetry/exporter-otlp` ^1.1
     - `open-telemetry/sdk` ^1.1
-    - `open-telemetry/transport-grpc` ^1.1
+    - `open-telemetry/transport-grpc` ^1.1 + `ext-grpc` — only for the `grpc` protocol
 
 ---
 
@@ -42,27 +42,11 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed in v2.0, including breaking la
 composer require laratel/opentelemetry
 ```
 
-⚠️ If you encounter the following error:
+The default OTLP/HTTP transport needs nothing else. To export over **gRPC**, install the `grpc` PHP extension and the transport package:
 
+```bash
+composer require open-telemetry/transport-grpc
 ```
-open-telemetry/transport-grpc requires ext-grpc * -> it is missing from your system.
-```
-
-It means the **gRPC PHP extension** is not installed or enabled. You can fix this by:
-
-- Enabling the `grpc` extension in your `php.ini` file:
-
-  ```
-  extension=grpc
-  ```
-
-- Restarting your web server (Apache, Nginx) or PHP-FPM service after making changes.
-
-- Alternatively — and always, if you only use the HTTP protocol — bypass the requirement:
-
-  ```bash
-  composer require laratel/opentelemetry --ignore-platform-req=ext-grpc
-  ```
 
 ### 2. Register the Service Provider (optional)
 
@@ -92,16 +76,17 @@ This creates `config/opentelemetry.php`. Update the settings as needed, such as 
 | Key | Default | Purpose |
 |---|---|---|
 | `enabled` | `true` | Master switch; `false` makes the package a no-op. |
-| `protocol` | `http` | OTLP transport: `http` (= `http/json`), `http/protobuf`, or `grpc` (gRPC requires `ext-grpc`). |
+| `protocol` | `http` | OTLP transport: `http` (= `http/json`), `http/protobuf`, or `grpc` (needs `ext-grpc` and `open-telemetry/transport-grpc`). |
 | `endpoint` | `http://localhost:4318` | OTLP collector endpoint (`4317` when protocol is `grpc`). |
 | `headers` | — | Extra headers sent with every export (`key1=value1,key2=value2` or an array), e.g. an auth token. |
-| `metrics_temporality` | `cumulative` | `cumulative` or `delta` — see [Metric temporality](#metric-temporality). |
+| `metrics_temporality` | `delta` | `delta` or `cumulative` — see [Metric temporality](#metric-temporality). |
 | `service_name` / `service_namespace` / `service_version` | `laravel_app` / `laratel` / `1.0.0` | Resource attributes attached to every exported trace, metric, and log. |
 | `enable_reachability_check` | `true` | Probe the collector on boot and disable telemetry if it is down. |
 | `reachability_timeout` | `0.1` | Probe timeout in seconds. |
 | `system_metrics_enabled` | `true` | Toggles CPU/memory/disk/network collection (reads `/proc`, Linux only). |
 | `excluded_routes` | assets, health checks, … | Paths (with `*` wildcards) skipped by both middleware. |
 | `excluded_queries` | — | Plain, **case-insensitive substrings**; any query containing one is not traced. |
+| `state_path` | `storage/framework/cache/otel-system-metrics.json` | Where previous CPU/network counter readings are kept between requests; `null` keeps them in memory only. |
 | `cpu_path`, `memory_path`, `disk_path`, `network_path`, `connection_path` | `/proc/...`, `/` | Source paths for system metrics. |
 
 ### Environment Variables
@@ -114,7 +99,7 @@ OTEL_SERVICE_VERSION=1.0.0
 OTEL_EXPORTER_OTLP_PROTOCOL=http
 OTEL_EXPORTER_OTLP_ENDPOINT=http://your_otel_collector:4318
 OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer your-token"
-OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
+OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta
 OTEL_ENABLE_REACHABILITY_CHECK=true
 OTEL_REACHABILITY_TIMEOUT=0.1
 OTEL_SYSTEM_METRICS_ENABLED=true
@@ -124,9 +109,9 @@ If the endpoint URL has no port, the scheme default (80 / 443) is used — both 
 
 ### Metric temporality
 
-Under PHP-FPM every request runs in a fresh process, so a *cumulative* counter restarts from zero on each request and most backends will not see it grow. Set `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` (and make sure your collector/backend accepts delta metrics) for FPM deployments; keep `cumulative` for long-lived workers such as Octane.
+Metrics are exported with **delta** temporality by default. Under PHP-FPM every request runs in a fresh process, so a *cumulative* counter would restart from zero on each request and never grow; deltas are correct for both FPM and long-lived workers. Make sure your pipeline accepts delta metrics (the OpenTelemetry Collector's `prometheus` exporter does; Prometheus's own OTLP endpoint needs delta support enabled). If it cannot, and you run a long-lived runtime such as Octane, set `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative`.
 
-For the same reason, the delta-based system counters (`laratel_system_cpu_time_seconds_total` and the network counters) only produce values in long-lived workers: they need a previous reading from the same process.
+The system counters (`laratel_system_cpu_time_seconds_total` and the network counters) are differences between two readings of `/proc`. The previous reading is kept in `state_path` under a file lock, so they work under PHP-FPM too and each interval is reported by exactly one request.
 
 ### Log Channel Configuration
 
@@ -299,7 +284,7 @@ Find a complete repository containing a Docker Compose file and configuration fo
 Contributions are welcome! Please fork the repository, create a feature branch, and submit a pull request.
 
 ```bash
-composer update --ignore-platform-req=ext-grpc
+composer update --ignore-platform-req=ext-grpc   # the gRPC transport is a dev dependency
 
 composer test      # PHPUnit
 composer analyse   # PHPStan (level 5)
