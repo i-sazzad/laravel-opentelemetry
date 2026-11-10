@@ -5,33 +5,52 @@ namespace Laratel\Opentelemetry\Support;
 use Illuminate\Support\Facades\Log;
 
 /**
- * One shared, cached probe of the OTLP endpoint, used by the service
- * provider and the log channel factory so both agree on the result and
- * the collector is contacted at most once per process.
+ * Decides whether telemetry may talk to the collector right now.
+ *
+ * Two mechanisms, both shared by the service provider, the log channel and
+ * the exporters:
+ *
+ *  - a TCP probe of the OTLP endpoint, at most once per process;
+ *  - a circuit breaker: when the probe or a real export fails, the
+ *    collector is marked down for `retry_after` seconds. The marker lives
+ *    in the state file, so under PHP-FPM the following requests neither
+ *    probe, nor export, nor log again until the cool-down has passed.
+ *
+ * A dead collector therefore costs one failed attempt per cool-down
+ * instead of a timeout on every request.
  */
 final class Reachability
 {
+    private const STATE_KEY = 'collector_down';
+
+    /** Result for this process; a negative result expires with the cool-down. */
     private static ?bool $reachable = null;
+
+    private static int $expiresAt = 0;
 
     public static function check(): bool
     {
-        if (! config('opentelemetry.enable_reachability_check', true)) {
-            return true;
+        if (self::$reachable !== null && (self::$reachable || time() < self::$expiresAt)) {
+            return self::$reachable;
         }
 
-        if (self::$reachable !== null) {
-            return self::$reachable;
+        $downUntil = (int) (SnapshotStore::get(self::STATE_KEY)['until'] ?? 0);
+        if ($downUntil > time()) {
+            self::$expiresAt = $downUntil;
+
+            return self::$reachable = false;
+        }
+
+        if (! config('opentelemetry.enable_reachability_check', true)) {
+            return self::$reachable = true;
         }
 
         $endpoint = config('opentelemetry.endpoint');
         $parts = is_string($endpoint) ? parse_url($endpoint) : false;
         $host = is_array($parts) ? ($parts['host'] ?? null) : null;
 
-        // Cache the result BEFORE logging: when the default log channel is
-        // (or stacks) the otel channel, logging re-enters this check.
         if (! $host) {
-            self::$reachable = false;
-            self::log('error', 'Invalid OTEL_EXPORTER_OTLP_ENDPOINT; OpenTelemetry is disabled.', ['endpoint' => $endpoint]);
+            self::markDown('Invalid OTEL_EXPORTER_OTLP_ENDPOINT', ['endpoint' => $endpoint], 'error');
 
             return false;
         }
@@ -50,26 +69,42 @@ final class Reachability
             return self::$reachable = true;
         }
 
-        self::$reachable = false;
-        self::log('warning', "OTLP endpoint unreachable: {$host}:{$port}. OpenTelemetry is disabled.", [
-            'error' => trim((string) $errstr),
-        ]);
+        self::markDown("OTLP endpoint unreachable: {$host}:{$port}", ['error' => trim((string) $errstr)]);
 
         return false;
     }
 
-    /** Forget the cached result (long-running workers, tests). */
+    /**
+     * Open the circuit: stop probing and exporting for `retry_after`
+     * seconds, in this process and (through the state file) in the others.
+     */
+    public static function markDown(string $reason, array $context = [], string $level = 'warning'): void
+    {
+        $retryAfter = max(1, (int) config('opentelemetry.retry_after', 30));
+
+        // Set the result BEFORE logging: when the default log channel is
+        // (or stacks) the otel channel, logging re-enters check().
+        self::$reachable = false;
+        self::$expiresAt = time() + $retryAfter;
+
+        try {
+            SnapshotStore::put(self::STATE_KEY, ['until' => self::$expiresAt]);
+            Log::log($level, "[OTEL] {$reason}. Telemetry is paused for {$retryAfter}s.", $context);
+        } catch (\Throwable) {
+            // Telemetry must never break the host application.
+        }
+    }
+
+    /** Forget the result and the down marker (tests, manual recovery). */
     public static function reset(): void
     {
         self::$reachable = null;
-    }
+        self::$expiresAt = 0;
 
-    private static function log(string $level, string $message, array $context): void
-    {
         try {
-            Log::log($level, $message, $context);
+            SnapshotStore::put(self::STATE_KEY, []);
         } catch (\Throwable) {
-            // Telemetry must never break the host application.
+            // Nothing to forget.
         }
     }
 }

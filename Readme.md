@@ -16,7 +16,7 @@
 - **Metrics** for HTTP requests, database queries, cache operations (via Laravel cache events), errors, and Linux system resources — all with bounded, low-cardinality labels.
 - **Efficient export** — spans are batched (`BatchSpanProcessor`) and everything is exported after the response has been sent, so telemetry adds no request latency.
 - **One shared resource** — traces, metrics, and logs all carry `service.name`, `service.namespace`, `service.version`, and `deployment.environment`.
-- **Graceful degradation** — if the collector is unreachable at boot, the package disables itself instead of breaking your app.
+- **Graceful degradation** — if the collector is unreachable, slow, or dies mid-flight, telemetry pauses itself (circuit breaker with a cool-down) instead of slowing down or breaking your app.
 - Middleware aliases registered automatically; publishable, env-driven configuration.
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in v2.0, including breaking label renames.
@@ -25,8 +25,8 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed in v2.0, including breaking la
 
 ## Requirements
 
-- PHP >= 8.2
-- Laravel >= 10.x
+- PHP >= 8.3
+- Laravel 10, 11, 12 or 13
 - Dependencies:
     - `open-telemetry/exporter-otlp` ^1.1
     - `open-telemetry/sdk` ^1.1
@@ -83,10 +83,13 @@ This creates `config/opentelemetry.php`. Update the settings as needed, such as 
 | `service_name` / `service_namespace` / `service_version` | `laravel_app` / `laratel` / `1.0.0` | Resource attributes attached to every exported trace, metric, and log. |
 | `enable_reachability_check` | `true` | Probe the collector on boot and disable telemetry if it is down. |
 | `reachability_timeout` | `0.1` | Probe timeout in seconds. |
+| `export_timeout` | `3.0` | Seconds a single export may take. |
+| `export_retries` | `0` | Retries for a failed export. |
+| `retry_after` | `30` | Seconds telemetry stays paused after a failed probe or export — see [When the collector is down](#when-the-collector-is-down). |
 | `system_metrics_enabled` | `true` | Toggles CPU/memory/disk/network collection (reads `/proc`, Linux only). |
 | `excluded_routes` | assets, health checks, … | Paths (with `*` wildcards) skipped by both middleware. |
 | `excluded_queries` | — | Plain, **case-insensitive substrings**; any query containing one is not traced. |
-| `state_path` | `storage/framework/cache/otel-system-metrics.json` | Where previous CPU/network counter readings are kept between requests; `null` keeps them in memory only. |
+| `state_path` | `storage/framework/cache/otel-system-metrics.json` | Small state file shared between requests: previous CPU/network counter readings and the collector-down marker. `null` keeps state in memory only. |
 | `cpu_path`, `memory_path`, `disk_path`, `network_path`, `connection_path` | `/proc/...`, `/` | Source paths for system metrics. |
 
 ### Environment Variables
@@ -102,10 +105,25 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer your-token"
 OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta
 OTEL_ENABLE_REACHABILITY_CHECK=true
 OTEL_REACHABILITY_TIMEOUT=0.1
+OTEL_EXPORT_TIMEOUT=3
+OTEL_EXPORT_RETRIES=0
+OTEL_RETRY_AFTER=30
 OTEL_SYSTEM_METRICS_ENABLED=true
 ```
 
 If the endpoint URL has no port, the scheme default (80 / 443) is used — both for exporting and for the reachability probe.
+
+### When the collector is down
+
+Telemetry must never cost you a request. If the endpoint cannot be reached, refuses connections, or accepts them and never answers:
+
+- the first failed probe or export marks the collector **down for `retry_after` seconds** and logs one warning (`[OTEL] … Telemetry is paused for 30s.`);
+- while it is down, requests do not probe, do not export, and do not log again — spans, metrics and log records produced in that window are dropped;
+- after the cool-down the next request tries again, and telemetry resumes on its own once the collector is back.
+
+A single export is bounded by `export_timeout` (3 seconds by default) and runs after the response has been sent. The down marker is kept in `state_path`, so under PHP-FPM all workers share it.
+
+Under Octane (or any long-lived worker), a collector that was down **when the worker booted** is picked up again when the workers are reloaded.
 
 ### Metric temporality
 
@@ -291,7 +309,7 @@ composer analyse   # PHPStan (level 5)
 composer format    # Laravel Pint
 ```
 
-The CI workflow runs the same three checks on PHP 8.2–8.4.
+The CI workflow runs the same three checks on PHP 8.3–8.5.
 
 ---
 

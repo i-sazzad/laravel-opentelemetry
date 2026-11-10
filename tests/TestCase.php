@@ -21,6 +21,7 @@ abstract class TestCase extends Orchestra
      */
     private const STATIC_RESETS = [
         [Reachability::class, 'reachable', null],
+        [Reachability::class, 'expiresAt', 0],
         [OtelLoggerFactory::class, 'loggerProvider', null],
         [TraceService::class, 'listeningOn', null],
         [MetricsService::class, 'listeningOn', null],
@@ -36,6 +37,10 @@ abstract class TestCase extends Orchestra
         $_ENV['OTEL_EXPORTER_OTLP_PROTOCOL'] = $_SERVER['OTEL_EXPORTER_OTLP_PROTOCOL'] = 'http';
         putenv('OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:1');
         putenv('OTEL_EXPORTER_OTLP_PROTOCOL=http');
+        // Same reason: keep shared state in memory, never in a file that
+        // would leak a "collector down" marker from one test into the next.
+        $_ENV['OTEL_STATE_PATH'] = $_SERVER['OTEL_STATE_PATH'] = '';
+        putenv('OTEL_STATE_PATH=');
 
         foreach (self::STATIC_RESETS as [$class, $property, $default]) {
             try {

@@ -38,24 +38,44 @@ final class OtlpTransport
         $protocol = strtolower((string) config('opentelemetry.protocol', 'http'));
         $headers = self::headers();
 
-        return match ($protocol) {
+        // Exporting happens inside a web request's lifetime, so a slow or
+        // dead collector must fail fast rather than hold the PHP worker
+        // for the SDK defaults (10s per attempt, three retries).
+        $timeout = max(0.1, (float) config('opentelemetry.export_timeout', 3.0));
+        $retries = max(0, (int) config('opentelemetry.export_retries', 0));
+
+        $transport = match ($protocol) {
             'grpc' => self::grpcFactory()->create(
                 $endpoint.self::GRPC_METHODS[$signal],
                 'application/x-protobuf',
-                $headers
+                $headers,
+                null,
+                $timeout,
+                100,
+                $retries
             ),
             'http', 'http/json' => (new OtlpHttpTransportFactory)->create(
                 "{$endpoint}/v1/{$signal}",
                 'application/json',
-                $headers
+                $headers,
+                null,
+                $timeout,
+                100,
+                $retries
             ),
             'http/protobuf' => (new OtlpHttpTransportFactory)->create(
                 "{$endpoint}/v1/{$signal}",
                 'application/x-protobuf',
-                $headers
+                $headers,
+                null,
+                $timeout,
+                100,
+                $retries
             ),
             default => throw new InvalidArgumentException("Unsupported OTLP protocol: {$protocol}"),
         };
+
+        return new GuardedTransport($transport);
     }
 
     private static function grpcFactory(): GrpcTransportFactory

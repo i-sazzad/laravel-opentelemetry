@@ -4,7 +4,7 @@
 
 ### Breaking changes
 
-- **PHP >= 8.2 and Laravel >= 10 required** (the code already used PHP 8.2 syntax; composer.json now says so).
+- **PHP >= 8.3 and Laravel >= 10 required.** Laravel 13 is supported; CI runs on PHP 8.3, 8.4 and 8.5.
 - **`excluded_queries` config values are now plain case-insensitive substrings**, not regexes. Previously the shipped regex defaults never matched anything.
 - **Metric labels changed** (dashboards must be updated):
   - `service.name`, `host` / `net.host.name` labels removed from all metrics — they are now OTLP *resource* attributes on every export.
@@ -35,6 +35,8 @@
 - Cache metrics now actually work, via Laravel cache events (the old undocumented `otel` cache-driver wrapper was removed).
 - `enable_reachability_check` is honored, with configurable `reachability_timeout`.
 - `system_metrics_enabled` flag.
+- **Circuit breaker for a dead collector**: after a failed probe or export the collector is marked down for `retry_after` seconds (`OTEL_RETRY_AFTER`, default 30). While down, requests neither probe, nor export, nor log again; the marker is shared between PHP-FPM requests through `state_path`.
+- `export_timeout` (`OTEL_EXPORT_TIMEOUT`, default 3s) and `export_retries` (`OTEL_EXPORT_RETRIES`, default 0).
 - `enabled` (`OTEL_ENABLED`) master switch.
 - `headers` (`OTEL_EXPORTER_OTLP_HEADERS`) for authenticated/hosted collectors.
 - `metrics_temporality` (`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`): `delta` (default) or `cumulative`.
@@ -67,3 +69,5 @@
 - The request span start time is taken per request (`REQUEST_TIME_FLOAT`); `LARAVEL_START` is fixed at worker boot under Octane.
 - `enduser.id` uses the auth identifier instead of assuming an `id` property.
 - Applying the trace middleware both globally and on a route no longer creates nested duplicate spans.
+- **A collector that was down, or accepted connections without answering, could take the application down with it**: every export waited for the SDK defaults (10s per attempt, 3 retries, for each of traces, metrics and logs — up to two minutes per request), running into PHP's `max_execution_time`. Exports now fail fast, the first failure pauses telemetry for the cool-down, and the remaining signals are dropped instead of each timing out.
+- The unreachable-collector warning was logged on every request; it is now logged once per cool-down.

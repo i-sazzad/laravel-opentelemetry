@@ -20,6 +20,16 @@ return [
     // backend. "key1=value1,key2=value2" or an array.
     'headers' => env('OTEL_EXPORTER_OTLP_HEADERS', ''),
 
+    // === Failure Handling ===
+    // Seconds one export may take, and how often it is retried. Kept short
+    // on purpose: exports run inside a web request's lifetime.
+    'export_timeout' => (float) env('OTEL_EXPORT_TIMEOUT', 3.0),
+    'export_retries' => (int) env('OTEL_EXPORT_RETRIES', 0),
+
+    // After a failed probe or export the collector is considered down for
+    // this many seconds: no probing, no exporting, no repeated warnings.
+    'retry_after' => (int) env('OTEL_RETRY_AFTER', 30),
+
     // 'delta' or 'cumulative'. Under PHP-FPM every request is a fresh process
     // whose counters restart at zero, so cumulative values never grow there;
     // 'delta' is correct for both FPM and long-lived workers. Switch to
@@ -58,9 +68,9 @@ return [
         'update `logs`',
     ],
 
-    // Where the previous CPU/network counter readings are kept between
-    // requests, so deltas work under PHP-FPM (one process per request).
-    // null keeps them in memory only (enough for Octane).
+    // Small state file shared between requests (PHP-FPM runs one process
+    // per request): the previous CPU/network counter readings, and the
+    // "collector is down" marker. null keeps state in memory only.
     'state_path' => env('OTEL_STATE_PATH', storage_path('framework/cache/otel-system-metrics.json')),
 
     // === System Paths for Metrics ===
