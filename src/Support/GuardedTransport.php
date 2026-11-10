@@ -43,7 +43,7 @@ final class GuardedTransport implements TransportInterface
      * through the application log, instead of once per signal (with a full
      * stack trace) through the SDK's error_log channel.
      */
-    private static function tripBreaker(\Throwable $e): ?string
+    private static function tripBreaker(\Throwable $e): null
     {
         Reachability::markDown('OTLP export failed', ['error' => $e->getMessage()]);
 
