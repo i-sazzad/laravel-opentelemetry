@@ -14,7 +14,7 @@
 - **Automatic HTTP request tracing** with OTel semantic-convention attributes and route-template span names (`GET /api/users/{id}`).
 - **Automatic database query tracing** with the SQL statement, connection, and execution time.
 - **Metrics** for HTTP requests, database queries, cache operations (via Laravel cache events), errors, and Linux system resources — all with bounded, low-cardinality labels.
-- **Efficient export** — spans are batched (`BatchSpanProcessor`) instead of exported one-by-one during the request.
+- **Efficient export** — spans are batched (`BatchSpanProcessor`) and everything is exported after the response has been sent, so telemetry adds no request latency.
 - **One shared resource** — traces, metrics, and logs all carry `service.name`, `service.namespace`, `service.version`, and `deployment.environment`.
 - **Graceful degradation** — if the collector is unreachable at boot, the package disables itself instead of breaking your app.
 - Middleware aliases registered automatically; publishable, env-driven configuration.
@@ -91,8 +91,11 @@ This creates `config/opentelemetry.php`. Update the settings as needed, such as 
 
 | Key | Default | Purpose |
 |---|---|---|
-| `protocol` | `http` | OTLP transport: `http` or `grpc` (gRPC requires `ext-grpc`). |
+| `enabled` | `true` | Master switch; `false` makes the package a no-op. |
+| `protocol` | `http` | OTLP transport: `http` (= `http/json`), `http/protobuf`, or `grpc` (gRPC requires `ext-grpc`). |
 | `endpoint` | `http://localhost:4318` | OTLP collector endpoint (`4317` when protocol is `grpc`). |
+| `headers` | — | Extra headers sent with every export (`key1=value1,key2=value2` or an array), e.g. an auth token. |
+| `metrics_temporality` | `cumulative` | `cumulative` or `delta` — see [Metric temporality](#metric-temporality). |
 | `service_name` / `service_namespace` / `service_version` | `laravel_app` / `laratel` / `1.0.0` | Resource attributes attached to every exported trace, metric, and log. |
 | `enable_reachability_check` | `true` | Probe the collector on boot and disable telemetry if it is down. |
 | `reachability_timeout` | `0.1` | Probe timeout in seconds. |
@@ -104,15 +107,26 @@ This creates `config/opentelemetry.php`. Update the settings as needed, such as 
 ### Environment Variables
 
 ```env
+OTEL_ENABLED=true
 OTEL_SERVICE_NAME=your_service_name
 OTEL_SERVICE_NAMESPACE=your_namespace
 OTEL_SERVICE_VERSION=1.0.0
 OTEL_EXPORTER_OTLP_PROTOCOL=http
 OTEL_EXPORTER_OTLP_ENDPOINT=http://your_otel_collector:4318
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer your-token"
+OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
 OTEL_ENABLE_REACHABILITY_CHECK=true
 OTEL_REACHABILITY_TIMEOUT=0.1
 OTEL_SYSTEM_METRICS_ENABLED=true
 ```
+
+If the endpoint URL has no port, the scheme default (80 / 443) is used — both for exporting and for the reachability probe.
+
+### Metric temporality
+
+Under PHP-FPM every request runs in a fresh process, so a *cumulative* counter restarts from zero on each request and most backends will not see it grow. Set `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta` (and make sure your collector/backend accepts delta metrics) for FPM deployments; keep `cumulative` for long-lived workers such as Octane.
+
+For the same reason, the delta-based system counters (`laratel_system_cpu_time_seconds_total` and the network counters) only produce values in long-lived workers: they need a previous reading from the same process.
 
 ### Log Channel Configuration
 
@@ -125,6 +139,8 @@ Add an `otel` channel to `config/logging.php` to ship logs over OTLP with trace 
     'level' => 'debug',
 ],
 ```
+
+Records below `level` are not exported.
 
 ---
 
@@ -147,7 +163,20 @@ Route::middleware(['opentelemetry.metrics', 'opentelemetry.trace'])->group(funct
 });
 ```
 
-To instrument **every** request, register them globally in `app/Http/Kernel.php`:
+Telemetry is exported when the application terminates, i.e. **after** the response has been sent, so it adds no latency to the request.
+
+To instrument **every** request, register them globally — in `bootstrap/app.php` on Laravel 11+:
+
+```php
+->withMiddleware(function (Middleware $middleware) {
+    $middleware->append([
+        \Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware::class,
+        \Laratel\Opentelemetry\Middleware\OpenTelemetryTraceMiddleware::class,
+    ]);
+})
+```
+
+or in `app/Http/Kernel.php` on Laravel 10:
 
 ```php
 protected $middleware = [
@@ -181,7 +210,7 @@ Logs carry the active trace/span IDs and are batched to the configured collector
 
 ### Automatic Query Tracing
 
-Database queries are traced automatically when the trace middleware is active. Spans are named after the SQL operation (`select`, `update`, …) and include:
+Database queries that run inside a traced request (or inside any span you started yourself) are traced automatically once the trace middleware has run. Spans are `CLIENT` spans named after the SQL operation (`select`, `update`, …; `other` for anything unrecognised) and include:
 
 - `db.system` — the database driver
 - `db.name` — the database name
@@ -206,6 +235,14 @@ if ($tracer) {
 }
 ```
 
+Outside an HTTP request (a console command, a queued job), flush when you are done if the process does not terminate the application itself:
+
+```php
+use Laratel\Opentelemetry\Providers\OpenTelemetryServiceProvider;
+
+OpenTelemetryServiceProvider::flush(app());
+```
+
 `getTracer()` returns `null` when telemetry is disabled (e.g. collector unreachable) — guard for it so your code runs everywhere.
 
 ---
@@ -225,16 +262,16 @@ All metrics carry `service.name` etc. as OTLP **resource** attributes (not per-m
 
 #### System Metrics (Linux only)
 - laratel_system_cpu_time_seconds_total — per-`state` time deltas in seconds
-- laratel_system_memory_usage_bytes — per `type`
-- laratel_system_disk_total_bytes
-- laratel_system_disk_free_bytes
-- laratel_system_disk_usage_bytes
+- laratel_system_memory_usage_bytes (Gauge) — per `type`
+- laratel_system_disk_total_bytes (Gauge)
+- laratel_system_disk_free_bytes (Gauge)
+- laratel_system_disk_usage_bytes (Gauge)
 
 #### Network Metrics — labels: `network.interface`, `network.io.direction`
 - laratel_system_network_io_bytes_total — per-direction byte deltas
 - laratel_system_network_dropped_total
 - laratel_system_network_errors_total
-- laratel_active_network_connections — per TCP `network.state`
+- laratel_active_network_connections (Gauge) — per TCP `network.state`
 
 #### Database Metrics — labels: `db.operation`, `db.connection`
 - laratel_db_query_total
@@ -247,7 +284,7 @@ All metrics carry `service.name` etc. as OTLP **resource** attributes (not per-m
 - laratel_cache_delete_total
 
 #### Error Metrics — label: `exception.type`
-- laratel_error_total
+- laratel_error_total — includes exceptions Laravel rendered as an error response
 
 ---
 

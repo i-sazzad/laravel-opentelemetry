@@ -31,15 +31,26 @@ readonly class OpenTelemetryTraceMiddleware
             return $next($request);
         }
 
+        // Applied both globally and on a route: keep the outer span only.
+        if ($request->attributes->get('otel_traced', false)) {
+            return $next($request);
+        }
+        $request->attributes->set('otel_traced', true);
+
         $this->traceService->dbQueryTrace();
 
         // Continue a distributed trace if the caller sent W3C trace context.
         $parent = TraceContextPropagator::getInstance()->extract($request->headers->all());
 
-        $startTime = defined('LARAVEL_START') ? LARAVEL_START : microtime(true);
+        // Per-request start time. LARAVEL_START is unsuitable: under Octane
+        // it is defined once, when the worker boots.
+        $requestStart = $request->server('REQUEST_TIME_FLOAT');
+        $startTime = is_numeric($requestStart) && $requestStart > 0 ? (float) $requestStart : microtime(true);
 
+        // Until the route is matched the only low-cardinality name is the
+        // method (the raw path would create one span name per URL).
         $span = $tracer
-            ->spanBuilder($request->method().' '.$request->path())
+            ->spanBuilder($request->method())
             ->setParent($parent)
             ->setStartTimestamp((int) ($startTime * 1_000_000_000))
             ->setSpanKind(SpanKind::KIND_SERVER)
@@ -62,6 +73,13 @@ readonly class OpenTelemetryTraceMiddleware
             }
 
             $this->traceService->setSpanAttributes($span, $request, $response, $startTime);
+
+            // Laravel converts exceptions into responses before they reach
+            // middleware; the original is kept on the response.
+            $exception = $response->exception ?? null;
+            if ($exception instanceof Throwable) {
+                $span->recordException($exception);
+            }
 
             $status = $response->getStatusCode();
             if ($status >= 400) {

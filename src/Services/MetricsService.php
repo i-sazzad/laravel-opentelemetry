@@ -10,6 +10,7 @@ use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Laratel\Opentelemetry\Support\Sql;
 use OpenTelemetry\API\Metrics\MeterInterface;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -24,6 +25,9 @@ class MetricsService
     private static array $previousCpu = [];
 
     private static array $previousNetwork = [];
+
+    /** The event dispatcher the DB/cache listeners were registered on. */
+    private static ?\WeakReference $listeningOn = null;
 
     public function __construct(?MeterInterface $meter = null)
     {
@@ -48,16 +52,16 @@ class MetricsService
 
             // SYSTEM
             'system_cpu_time_seconds_total' => $this->meter->createCounter('laratel_system_cpu_time_seconds_total', 's'),
-            'system_memory_usage_bytes' => $this->meter->createHistogram('laratel_system_memory_usage_bytes', 'By'),
-            'system_disk_total_bytes' => $this->meter->createHistogram('laratel_system_disk_total_bytes', 'By'),
-            'system_disk_free_bytes' => $this->meter->createHistogram('laratel_system_disk_free_bytes', 'By'),
-            'system_disk_usage_bytes' => $this->meter->createHistogram('laratel_system_disk_usage_bytes', 'By'),
+            'system_memory_usage_bytes' => $this->meter->createGauge('laratel_system_memory_usage_bytes', 'By'),
+            'system_disk_total_bytes' => $this->meter->createGauge('laratel_system_disk_total_bytes', 'By'),
+            'system_disk_free_bytes' => $this->meter->createGauge('laratel_system_disk_free_bytes', 'By'),
+            'system_disk_usage_bytes' => $this->meter->createGauge('laratel_system_disk_usage_bytes', 'By'),
 
             // NETWORK
             'system_network_io_bytes_total' => $this->meter->createCounter('laratel_system_network_io_bytes_total', 'By'),
             'system_network_dropped_total' => $this->meter->createCounter('laratel_system_network_dropped_total'),
             'system_network_errors_total' => $this->meter->createCounter('laratel_system_network_errors_total'),
-            'active_network_connections' => $this->meter->createHistogram('laratel_active_network_connections'),
+            'active_network_connections' => $this->meter->createGauge('laratel_active_network_connections'),
 
             // DATABASE
             'db_query_total' => $this->meter->createCounter('laratel_db_query_total'),
@@ -75,17 +79,59 @@ class MetricsService
     }
 
     /**
+     * Register the database and cache listeners. Idempotent per event
+     * dispatcher, so calling it on every request is free.
+     */
+    public function registerListeners(): void
+    {
+        $events = app('events');
+        if (self::$listeningOn?->get() === $events) {
+            return;
+        }
+        self::$listeningOn = \WeakReference::create($events);
+
+        $this->registerCacheEventListeners();
+
+        Event::listen(QueryExecuted::class, static function (QueryExecuted $query): void {
+            app(self::class)->recordDbMetrics($query);
+        });
+    }
+
+    /**
      * Count cache operations via Laravel's cache events.
      * Labels deliberately exclude the cache key (unbounded cardinality).
+     *
+     * Listeners resolve this service from the container on every event, so
+     * they keep working when the container hands out a fresh instance
+     * (Octane, tests) instead of recording into a stale one.
      */
     public function registerCacheEventListeners(): void
     {
-        $labels = fn (object $event): array => ['cache.store' => $event->storeName ?? 'default'];
+        $listeners = [
+            CacheHit::class => 'cache_hit_total',
+            CacheMissed::class => 'cache_miss_total',
+            KeyWritten::class => 'cache_store_total',
+            KeyForgotten::class => 'cache_delete_total',
+        ];
 
-        Event::listen(CacheHit::class, fn (CacheHit $e) => $this->metrics['cache_hit_total']->add(1, $labels($e)));
-        Event::listen(CacheMissed::class, fn (CacheMissed $e) => $this->metrics['cache_miss_total']->add(1, $labels($e)));
-        Event::listen(KeyWritten::class, fn (KeyWritten $e) => $this->metrics['cache_store_total']->add(1, $labels($e)));
-        Event::listen(KeyForgotten::class, fn (KeyForgotten $e) => $this->metrics['cache_delete_total']->add(1, $labels($e)));
+        foreach ($listeners as $event => $metric) {
+            Event::listen($event, static function (object $e) use ($metric): void {
+                app(self::class)->recordCacheMetric($metric, $e->storeName ?? null);
+            });
+        }
+    }
+
+    public function recordCacheMetric(string $metric, ?string $store): void
+    {
+        if (! isset($this->metrics[$metric])) {
+            return;
+        }
+
+        try {
+            $this->metrics[$metric]->add(1, ['cache.store' => $store ?: 'default']);
+        } catch (\Throwable) {
+            // Metrics must never break a cache operation.
+        }
     }
 
     /**
@@ -120,6 +166,27 @@ class MetricsService
     }
 
     /**
+     * Record system and network metrics without ever throwing: an
+     * unreadable /proc file (open_basedir, hardened containers, non-Linux
+     * hosts) must not turn a successful request into an error.
+     */
+    public function recordHostMetrics(): void
+    {
+        if ($this->metrics === []) {
+            return;
+        }
+
+        try {
+            $this->recordSystemMetrics();
+            $this->recordNetworkMetrics();
+        } catch (\Throwable $e) {
+            if (config('app.debug')) {
+                Log::warning("[OTEL] Host metrics record failed: {$e->getMessage()}");
+            }
+        }
+    }
+
+    /**
      * Record system-level metrics. CPU is reported as time deltas since
      * the previous reading (a counter must receive deltas, and /proc/stat
      * exposes cumulative USER_HZ ticks — 100 per second on Linux).
@@ -147,7 +214,7 @@ class MetricsService
             $this->metrics['system_memory_usage_bytes']->record($bytes, ['type' => $type]);
         }
 
-        $path = config('opentelemetry.disk_path');
+        $path = (string) config('opentelemetry.disk_path', '/');
         $total = @disk_total_space($path);
         $free = @disk_free_space($path);
         if ($total !== false && $free !== false) {
@@ -162,15 +229,21 @@ class MetricsService
      */
     public function recordDbMetrics(QueryExecuted $query): void
     {
-        $operation = strtolower(strtok(ltrim($query->sql), " \t(")) ?: 'other';
+        if ($this->metrics === []) {
+            return;
+        }
 
         $labels = [
-            'db.operation' => $operation,
+            'db.operation' => Sql::operation($query->sql),
             'db.connection' => $query->connectionName ?: 'default',
         ];
 
-        $this->metrics['db_query_total']->add(1, $labels);
-        $this->metrics['db_query_latency_seconds']->record($query->time / 1000, $labels);
+        try {
+            $this->metrics['db_query_total']->add(1, $labels);
+            $this->metrics['db_query_latency_seconds']->record($query->time / 1000, $labels);
+        } catch (\Throwable) {
+            // Metrics must never break the query that was just executed.
+        }
     }
 
     /**
@@ -179,9 +252,13 @@ class MetricsService
      */
     public function recordErrorMetrics(\Throwable $e): void
     {
-        $this->metrics['error_total']->add(1, [
-            'exception.type' => get_class($e),
-        ]);
+        try {
+            $this->metrics['error_total']->add(1, [
+                'exception.type' => get_class($e),
+            ]);
+        } catch (\Throwable) {
+            // Never mask the original exception with a metrics failure.
+        }
     }
 
     /**
@@ -193,12 +270,11 @@ class MetricsService
     {
         $states = ['user', 'nice', 'system', 'idle', 'iowait', 'irq', 'softirq', 'steal'];
         $path = config('opentelemetry.cpu_path');
-        if (! file_exists($path)) {
+        if (! is_string($path) || ! is_readable($path)) {
             return [];
         }
 
-        $lines = file($path);
-        foreach ($lines as $line) {
+        foreach (@file($path) ?: [] as $line) {
             if (preg_match('/^cpu\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/', $line, $m)) {
                 return array_combine($states, array_map('intval', array_slice($m, 1, 8)));
             }
@@ -210,13 +286,12 @@ class MetricsService
     private function getMemoryInfo(): array
     {
         $path = config('opentelemetry.memory_path');
-        if (! file_exists($path)) {
+        if (! is_string($path) || ! is_readable($path)) {
             return [];
         }
 
-        $lines = file($path);
         $raw = [];
-        foreach ($lines as $line) {
+        foreach (@file($path) ?: [] as $line) {
             if (preg_match('/^(\w+):\s+(\d+)/', $line, $m)) {
                 $raw[strtolower($m[1])] = (int) $m[2] * 1024;
             }
@@ -243,9 +318,10 @@ class MetricsService
         }
 
         $networkPath = config('opentelemetry.network_path');
-        if (is_readable($networkPath)) {
-            foreach (file($networkPath) as $line) {
-                if (! preg_match('/^\s*([\w]+):\s*(.+)$/', $line, $m)) {
+        if (is_string($networkPath) && is_readable($networkPath)) {
+            foreach (@file($networkPath) ?: [] as $line) {
+                // Interface names may contain "-", "." and "@" (br-1a2b, eth0.100, veth@if7).
+                if (! preg_match('/^\s*([^\s:]+):\s*(.+)$/', $line, $m)) {
                     continue;
                 }
 
@@ -293,7 +369,7 @@ class MetricsService
     private function recordTcpConnectionStates(): void
     {
         $connectionPath = config('opentelemetry.connection_path');
-        if (! is_readable($connectionPath)) {
+        if (! is_string($connectionPath) || ! is_readable($connectionPath)) {
             return;
         }
 
@@ -305,12 +381,13 @@ class MetricsService
         ];
 
         $counts = array_fill_keys(array_values($stateMap), 0);
-        foreach (file($connectionPath) as $line) {
-            if (preg_match('/\s+[0-9A-F]+:\s+[0-9A-F]+\s+[0-9A-F]+\s+([0-9A-F]{2})/', $line, $m)) {
-                $state = $stateMap[strtoupper($m[1])] ?? null;
-                if ($state !== null) {
-                    $counts[$state]++;
-                }
+        foreach (@file($connectionPath) ?: [] as $line) {
+            // "sl: local_address rem_address st ..." — addresses are HEX:PORT,
+            // the state is the 4th whitespace-separated column.
+            $columns = preg_split('/\s+/', trim($line));
+            $state = $stateMap[strtoupper($columns[3] ?? '')] ?? null;
+            if ($state !== null) {
+                $counts[$state]++;
             }
         }
 

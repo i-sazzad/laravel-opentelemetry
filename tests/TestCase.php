@@ -3,33 +3,28 @@
 namespace Laratel\Opentelemetry\Tests;
 
 use Laratel\Opentelemetry\Logger\OtelLoggerFactory;
-use Laratel\Opentelemetry\Middleware\OpenTelemetryMetricsMiddleware;
 use Laratel\Opentelemetry\Providers\OpenTelemetryServiceProvider;
 use Laratel\Opentelemetry\Services\MetricsService;
 use Laratel\Opentelemetry\Services\TraceService;
+use Laratel\Opentelemetry\Support\Reachability;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
 {
     /**
      * Static properties leak between tests in the same PHP process.
-     * Some entries only exist after later plans (or stop existing after
-     * refactors) — missing properties are skipped, so this list stays
-     * valid across plans 01-04 without edits.
+     * Missing properties are skipped, so a refactor that removes one does
+     * not break the suite.
      *
      * @var array<array{class-string, string, mixed}>
      */
     private const STATIC_RESETS = [
-        [OpenTelemetryServiceProvider::class, 'isReachable', null],
-        [OtelLoggerFactory::class, 'isReachable', null],
+        [Reachability::class, 'reachable', null],
         [OtelLoggerFactory::class, 'loggerProvider', null],
-        [TraceService::class, 'listenerRegistered', false],
-        [TraceService::class, 'exclusionPattern', null],
+        [TraceService::class, 'listeningOn', null],
+        [MetricsService::class, 'listeningOn', null],
         [MetricsService::class, 'previousCpu', []],
         [MetricsService::class, 'previousNetwork', []],
-        [OpenTelemetryMetricsMiddleware::class, 'cacheWrapped', false],
-        [OpenTelemetryMetricsMiddleware::class, 'cacheListenersRegistered', false],
-        [OpenTelemetryMetricsMiddleware::class, 'dbListenerRegistered', false],
     ];
 
     protected function setUp(): void

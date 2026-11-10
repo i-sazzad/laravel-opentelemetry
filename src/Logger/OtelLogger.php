@@ -10,10 +10,34 @@ use Psr\Log\LogLevel;
 
 readonly class OtelLogger implements LoggerInterface
 {
-    public function __construct(private LoggerProviderInterface $loggerProvider) {}
+    /** PSR-3 levels, least to most severe. */
+    private const LEVELS = [
+        LogLevel::DEBUG, LogLevel::INFO, LogLevel::NOTICE, LogLevel::WARNING,
+        LogLevel::ERROR, LogLevel::CRITICAL, LogLevel::ALERT, LogLevel::EMERGENCY,
+    ];
+
+    private int $minimumLevel;
+
+    /**
+     * @param  string  $minimumLevel  records below this PSR-3 level are dropped (the channel's "level")
+     */
+    public function __construct(
+        private LoggerProviderInterface $loggerProvider,
+        string $minimumLevel = LogLevel::DEBUG
+    ) {
+        $index = array_search(strtolower($minimumLevel), self::LEVELS, true);
+        $this->minimumLevel = $index === false ? 0 : (int) $index;
+    }
 
     public function log($level, $message, array $context = []): void
     {
+        $level = strtolower((string) $level);
+
+        $index = array_search($level, self::LEVELS, true);
+        if ($index !== false && (int) $index < $this->minimumLevel) {
+            return;
+        }
+
         // Extract exception for special handling, if present
         $exception = null;
         if (isset($context['exception']) && $context['exception'] instanceof \Throwable) {
@@ -21,12 +45,14 @@ readonly class OtelLogger implements LoggerInterface
             unset($context['exception']);
         }
 
-        $logRecord = (new LogRecord($message))
-            ->setTimestamp((int) (microtime(true) * 1_000_000_000))
-            ->setObservedTimestamp((int) (microtime(true) * 1_000_000_000))
+        $now = (int) (microtime(true) * 1_000_000_000);
+
+        $logRecord = (new LogRecord((string) $message))
+            ->setTimestamp($now)
+            ->setObservedTimestamp($now)
             ->setSeverityNumber(self::mapSeverityNumber($level))
             ->setSeverityText(strtoupper($level))
-            ->setAttributes($context)
+            ->setAttributes(self::normalizeContext($context))
             ->setContext(Context::getCurrent());
 
         // Attach exception details if they exist
@@ -36,7 +62,37 @@ readonly class OtelLogger implements LoggerInterface
             $logRecord->setAttribute('exception.stacktrace', $exception->getTraceAsString());
         }
 
-        $this->loggerProvider->getLogger('otel-logger', '1.0.0')->emit($logRecord);
+        try {
+            $this->loggerProvider->getLogger('otel-logger', '1.0.0')->emit($logRecord);
+        } catch (\Throwable) {
+            // Logging must never take the application down with it.
+        }
+    }
+
+    /**
+     * OTLP attributes only carry scalars and arrays of them; anything else
+     * (models, dates, enums, closures, resources) is reduced to a string so
+     * the exporter does not choke on it.
+     */
+    public static function normalizeContext(array $context, int $depth = 0): array
+    {
+        $normalized = [];
+
+        foreach ($context as $key => $value) {
+            $normalized[$key] = match (true) {
+                $value === null, is_scalar($value) => $value,
+                is_array($value) => $depth >= 5 ? '[...]' : self::normalizeContext($value, $depth + 1),
+                $value instanceof \DateTimeInterface => $value->format(DATE_ATOM),
+                $value instanceof \BackedEnum => $value->value,
+                $value instanceof \UnitEnum => $value->name,
+                $value instanceof \Stringable => (string) $value,
+                $value instanceof \JsonSerializable => json_encode($value, JSON_PARTIAL_OUTPUT_ON_ERROR) ?: get_class($value),
+                is_object($value) => get_class($value),
+                default => get_debug_type($value),
+            };
+        }
+
+        return $normalized;
     }
 
     /**

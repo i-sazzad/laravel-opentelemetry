@@ -143,6 +143,8 @@ class MetricsServiceTest extends TestCase
         ));
         $service->metrics['cache_hit_total'] = $counter;
 
+        // Listeners resolve the service from the container on every event.
+        $this->app->instance(MetricsService::class, $service);
         $service->registerCacheEventListeners();
 
         Event::dispatch(new CacheHit('array', 'user:42', 'cached-value'));

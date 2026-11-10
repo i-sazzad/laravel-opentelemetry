@@ -4,7 +4,6 @@ namespace Laratel\Opentelemetry\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Laratel\Opentelemetry\Helpers\Helper;
 use Laratel\Opentelemetry\Services\MetricsService;
 use Symfony\Component\HttpFoundation\Response;
@@ -12,10 +11,6 @@ use Throwable;
 
 class OpenTelemetryMetricsMiddleware
 {
-    private static bool $dbListenerRegistered = false;
-
-    private static bool $cacheListenersRegistered = false;
-
     public function __construct(
         protected Helper $helper,
         protected MetricsService $metrics
@@ -35,15 +30,7 @@ class OpenTelemetryMetricsMiddleware
         }
         $request->attributes->set('metrics_recorded', true);
 
-        if (! self::$cacheListenersRegistered) {
-            $this->metrics->registerCacheEventListeners();
-            self::$cacheListenersRegistered = true;
-        }
-
-        if (! self::$dbListenerRegistered) {
-            DB::listen(fn ($query) => $this->metrics->recordDbMetrics($query));
-            self::$dbListenerRegistered = true;
-        }
+        $this->metrics->registerListeners();
 
         $startTime = microtime(true);
         $this->metrics->metrics['http_requests_in_progress']->add(1);
@@ -52,8 +39,13 @@ class OpenTelemetryMetricsMiddleware
             $response = $next($request);
 
             $this->metrics->recordHttpMetrics($request, $response, $startTime);
-            $this->metrics->recordSystemMetrics();
-            $this->metrics->recordNetworkMetrics();
+
+            // Laravel converts exceptions into responses before they reach
+            // middleware; the original is kept on the response.
+            $exception = $response->exception ?? null;
+            if ($exception instanceof Throwable) {
+                $this->metrics->recordErrorMetrics($exception);
+            }
 
             return $response;
         } catch (Throwable $e) {
@@ -61,7 +53,9 @@ class OpenTelemetryMetricsMiddleware
             throw $e;
         } finally {
             $this->metrics->metrics['http_requests_in_progress']->add(-1);
-            $this->helper->flushMetrics();
+            $this->metrics->recordHostMetrics();
+            // Export happens when the application terminates (after the
+            // response is sent) — see OpenTelemetryServiceProvider::boot().
         }
     }
 }

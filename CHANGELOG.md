@@ -17,6 +17,11 @@
 - **Span attributes renamed to OTel semantic conventions:** `http.method`→`http.request.method`, `http.url`→`url.full`, `http.status_code`→`http.response.status_code`, `http.client_ip`→`client.address`, `http.user_agent`→`user_agent.original`.
 - **DB query span names** are now the SQL operation keyword (`select`, `update`, …) instead of the full SQL text (still available in `db.statement`).
 - **Config keys removed** (were never read): `traces_exporter`, `logs_exporter`, `metrics_exporter`, `propagators`, `traces_sampler`, `network_states`, `resource_attributes`.
+- **Point-in-time system metrics are now gauges**, not histograms: `laratel_system_memory_usage_bytes`, `laratel_system_disk_{total,free,usage}_bytes`, `laratel_active_network_connections`. Queries that used `_bucket` / `_sum` / `_count` series must read the gauge value instead.
+- **Telemetry is exported when the application terminates** (after the response is sent) instead of inside the metrics middleware. Code that calls the middleware by hand must call `$app->terminate()` or `OpenTelemetryServiceProvider::flush($app)`.
+- **Server span names** start as the bare HTTP method and are renamed to `METHOD /route/template` once the route is matched; unmatched requests (404s) no longer create one span name per URL.
+- **DB query spans** are only created inside an active span (no orphan root spans from console commands, queues, or excluded routes), are `CLIENT` spans, and unrecognised leading keywords are reported as `other`.
+- **The reachability probe uses the URL's default port** (80/443) when the endpoint has none, matching where the exporter actually connects, instead of assuming 4317/4318.
 - **Log severity numbers** now follow the OTel spec (DEBUG=5 … EMERGENCY=22). Log backends that filtered on the old numbers must be updated.
 
 ### Added
@@ -28,6 +33,12 @@
 - Cache metrics now actually work, via Laravel cache events (the old undocumented `otel` cache-driver wrapper was removed).
 - `enable_reachability_check` is honored, with configurable `reachability_timeout`.
 - `system_metrics_enabled` flag.
+- `enabled` (`OTEL_ENABLED`) master switch.
+- `headers` (`OTEL_EXPORTER_OTLP_HEADERS`) for authenticated/hosted collectors.
+- `metrics_temporality` (`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`): `cumulative` (default) or `delta`.
+- `http/json` and `http/protobuf` protocol values, alongside `http` and `grpc`.
+- The log channel honors its `level` option.
+- Exceptions handled by Laravel (rendered as error responses) are recorded on the request span and counted in `laratel_error_total`.
 - Test suite, PHPStan, Pint, GitHub Actions CI.
 
 ### Fixed
@@ -37,6 +48,19 @@
 - `Helper::flushMetrics()` no longer fatals when a Noop provider is bound.
 - CPU metrics record time deltas in seconds instead of re-adding cumulative `/proc/stat` ticks every request.
 - Disk metrics no longer do arithmetic on `false` when the path is invalid.
-- `LARAVEL_START` is guarded, fixing crashes under Octane and PHPUnit.
 - `http_requests_in_progress` is a real UpDownCounter instead of a histogram of +1/-1.
 - Error responses (HTTP >= 400) now correctly mark the span status as Error (previously the unconditional Ok status made the later Error status a no-op).
+- **Spans were never exported for normal requests**: the batch processor was never flushed, so spans were dropped unless a request produced 512 of them or ran longer than 5 seconds. Traces, metrics, and logs are now flushed when the application terminates, with a shutdown-time fallback.
+- Exporting no longer delays the response: the metrics middleware used to export synchronously before returning it.
+- `laratel_active_network_connections` always reported 0 (the `/proc/net/tcp` pattern could not match a real line).
+- Network interfaces whose names contain `-`, `.` or `@` (`br-…`, `eth0.100`, `veth…@if7`) were skipped.
+- An unreadable `/proc` file or a failing instrument could turn a successful request into a 500; system/DB/cache/error recording can no longer throw into the application.
+- Using the `otel` channel as the default log channel (or inside the default stack) recursed endlessly when the collector was unreachable.
+- Log context containing objects (models, dates, enums) is normalized instead of being dropped or breaking the export; non-string messages are cast.
+- A trailing slash on the endpoint no longer produces `//v1/traces` (404).
+- The log channel and the service provider now share one reachability probe and one protocol/endpoint resolution (they previously disagreed on the default port and on unknown protocols).
+- DB/cache listeners no longer capture a stale service instance (Octane) and are registered once per event dispatcher; they no longer require a default database connection to be configured.
+- `http.route`/`db.operation` labels stay bounded for multi-line SQL; an empty `excluded_queries` entry no longer excludes every query; a published config missing `excluded_routes` no longer errors.
+- The request span start time is taken per request (`REQUEST_TIME_FLOAT`); `LARAVEL_START` is fixed at worker boot under Octane.
+- `enduser.id` uses the auth identifier instead of assuming an `id` property.
+- Applying the trace middleware both globally and on a route no longer creates nested duplicate spans.

@@ -2,7 +2,12 @@
 
 return [
 
+    // === Master Switch ===
+    // false turns the whole package into a no-op (no probe, no exporters).
+    'enabled' => env('OTEL_ENABLED', true),
+
     // === OTLP Endpoint Configuration ===
+    // 'http' (alias of 'http/json'), 'http/protobuf', or 'grpc' (needs ext-grpc).
     'protocol' => env('OTEL_EXPORTER_OTLP_PROTOCOL', 'http'),
     'endpoint' => env(
         'OTEL_EXPORTER_OTLP_ENDPOINT',
@@ -10,6 +15,16 @@ return [
             ? 'http://localhost:4317'
             : 'http://localhost:4318'
     ),
+
+    // Extra headers sent with every export, e.g. an auth token for a hosted
+    // backend. "key1=value1,key2=value2" or an array.
+    'headers' => env('OTEL_EXPORTER_OTLP_HEADERS', ''),
+
+    // 'cumulative' or 'delta'. Under PHP-FPM every request is a fresh process
+    // whose counters restart at zero, so 'delta' is usually what you want
+    // there; keep 'cumulative' for long-lived workers (Octane) or backends
+    // that cannot ingest delta metrics.
+    'metrics_temporality' => env('OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE', 'cumulative'),
 
     // === Service Metadata ===
     'service_name' => env('OTEL_SERVICE_NAME', 'laravel_app'),

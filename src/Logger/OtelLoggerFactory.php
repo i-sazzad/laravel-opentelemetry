@@ -2,130 +2,93 @@
 
 namespace Laratel\Opentelemetry\Logger;
 
-use Exception;
-use Illuminate\Support\Facades\Log;
 use Laratel\Opentelemetry\Support\OtelResource;
+use Laratel\Opentelemetry\Support\OtlpTransport;
+use Laratel\Opentelemetry\Support\Reachability;
 use Monolog\Handler\NullHandler;
 use Monolog\Logger;
-use OpenTelemetry\API\Common\Time\SystemClock;
-use OpenTelemetry\Contrib\Grpc\GrpcTransportFactory;
+use OpenTelemetry\API\Common\Time\Clock;
 use OpenTelemetry\Contrib\Otlp\LogsExporter;
-use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
-use OpenTelemetry\SDK\Common\Attribute\AttributesFactory;
+use OpenTelemetry\SDK\Common\Attribute\Attributes;
 use OpenTelemetry\SDK\Common\Instrumentation\InstrumentationScopeFactory;
 use OpenTelemetry\SDK\Logs\LoggerProvider;
 use OpenTelemetry\SDK\Logs\Processor\BatchLogRecordProcessor;
+use Psr\Log\LogLevel;
 
 class OtelLoggerFactory
 {
-    /** The singleton LoggerProvider instance. */
+    /** The LoggerProvider shared by every otel channel in this process. */
     private static ?LoggerProvider $loggerProvider = null;
-
-    /** Cache for the reachability check result. */
-    private static ?bool $isReachable = null;
 
     /** Flag to ensure the shutdown function is only registered once. */
     private static bool $shutdownFunctionRegistered = false;
 
     /**
-     * Create a custom Monolog instance.
+     * Create the logger for a `custom` log channel.
      *
-     * @throws Exception
+     * Falls back to a logger that discards everything when telemetry is
+     * disabled, the collector is unreachable, or the exporter cannot be
+     * built — a logging channel must never break the application.
      */
     public function __invoke(array $config): Logger|OtelLogger
     {
-        // If the server is not reachable, return a logger that does nothing.
-        if (! $this->isServerReachable()) {
-            return new Logger('otel_fallback', [new NullHandler]);
+        if (! config('opentelemetry.enabled', true) || ! Reachability::check()) {
+            return self::nullLogger();
         }
 
-        // If we've already created the provider, reuse it.
-        if (self::$loggerProvider !== null) {
-            return new OtelLogger(self::$loggerProvider);
+        try {
+            self::$loggerProvider ??= self::buildProvider();
+        } catch (\Throwable $e) {
+            error_log('[OTEL] LoggerProvider setup failed: '.$e->getMessage());
+
+            return self::nullLogger();
         }
 
-        // --- This part runs only once ---
-
-        $endpoint = config('opentelemetry.endpoint');
-        $protocol = config('opentelemetry.protocol');
-
-        $logExporter = match ($protocol) {
-            'grpc' => new LogsExporter(
-                (new GrpcTransportFactory)->create(
-                    $endpoint.'/opentelemetry.proto.collector.logs.v1.LogsService/Export',
-                    'application/x-protobuf'
-                )
-            ),
-            'http' => new LogsExporter(
-                (new OtlpHttpTransportFactory)->create(
-                    $endpoint.'/v1/logs',
-                    'application/json'
-                )
-            ),
-            default => throw new \InvalidArgumentException("Unsupported OTLP protocol: $protocol"),
-        };
-
-        $logProcessor = new BatchLogRecordProcessor($logExporter, new SystemClock);
-        $attributesFactory = new AttributesFactory;
-
-        // Create and cache the LoggerProvider instance.
-        self::$loggerProvider = new LoggerProvider(
-            $logProcessor,
-            new InstrumentationScopeFactory($attributesFactory),
-            OtelResource::build()
-        );
-
-        // Register a shutdown function to ensure buffered logs are sent.
-        if (! self::$shutdownFunctionRegistered) {
-            register_shutdown_function([$logProcessor, 'shutdown']);
-            self::$shutdownFunctionRegistered = true;
-        }
-
-        return new OtelLogger(self::$loggerProvider);
+        return new OtelLogger(self::$loggerProvider, (string) ($config['level'] ?? LogLevel::DEBUG));
     }
 
     /**
-     * Check if the OpenTelemetry server is reachable.
-     * Caches the result in a static variable to avoid repeated checks.
+     * Export any buffered log records now. Called when the application
+     * terminates so long-running workers ship logs after every request.
      */
-    private function isServerReachable(): bool
+    public static function flush(): bool
     {
-        if (! config('opentelemetry.enable_reachability_check', true)) {
-            return true;
+        try {
+            return self::$loggerProvider?->forceFlush() ?? false;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private static function buildProvider(): LoggerProvider
+    {
+        $provider = new LoggerProvider(
+            new BatchLogRecordProcessor(
+                new LogsExporter(OtlpTransport::create(OtlpTransport::LOGS)),
+                Clock::getDefault()
+            ),
+            new InstrumentationScopeFactory(Attributes::factory()),
+            OtelResource::build()
+        );
+
+        // Last-resort flush for processes that exit without terminating
+        // the application (fatal errors, exit()).
+        if (! self::$shutdownFunctionRegistered) {
+            register_shutdown_function(static function (): void {
+                try {
+                    self::$loggerProvider?->shutdown();
+                } catch (\Throwable) {
+                    // Nothing useful can be done at shutdown.
+                }
+            });
+            self::$shutdownFunctionRegistered = true;
         }
 
-        if (self::$isReachable !== null) {
-            return self::$isReachable;
-        }
+        return $provider;
+    }
 
-        $endpoint = config('opentelemetry.endpoint');
-        if (! filter_var($endpoint, FILTER_VALIDATE_URL)) {
-            Log::error('Invalid OTEL_EXPORTER_OTLP_ENDPOINT provided.', ['endpoint' => $endpoint]);
-
-            return self::$isReachable = false;
-        }
-
-        $host = parse_url($endpoint, PHP_URL_HOST);
-        $port = parse_url($endpoint, PHP_URL_PORT);
-        if (! $port) {
-            $scheme = parse_url($endpoint, PHP_URL_SCHEME);
-            $port = ($scheme === 'https' || $scheme === 'http') ? 4318 : 4317;
-        }
-
-        $timeout = (float) config('opentelemetry.reachability_timeout', 0.1);
-        $connection = @fsockopen($host, $port, $errno, $errstr, $timeout);
-
-        if (is_resource($connection)) {
-            fclose($connection);
-            self::$isReachable = true;
-        } else {
-            Log::warning('OTLP endpoint is not reachable. OpenTelemetry logging will be disabled.', [
-                'endpoint' => "{$host}:{$port}",
-                'error' => trim($errstr ?? ''),
-            ]);
-            self::$isReachable = false;
-        }
-
-        return self::$isReachable;
+    private static function nullLogger(): Logger
+    {
+        return new Logger('otel_fallback', [new NullHandler]);
     }
 }
