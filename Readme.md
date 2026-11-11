@@ -2,7 +2,6 @@
 
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/laratel/opentelemetry.svg?style=flat&color=blue)](https://packagist.org/packages/laratel/opentelemetry)
 [![Total Downloads](https://img.shields.io/packagist/dt/laratel/opentelemetry.svg?style=flat&color=green)](https://packagist.org/packages/laratel/opentelemetry)
-[![Tests](https://github.com/i-sazzad/laravel-opentelemetry/actions/workflows/tests.yml/badge.svg)](https://github.com/i-sazzad/laravel-opentelemetry/actions/workflows/tests.yml)
 
 Traces, metrics, and logs for Laravel over OTLP: HTTP request tracing with W3C trace-context propagation, database query spans, low-cardinality metrics for HTTP, database, cache, errors and system resources, and a log channel that correlates log records with the active trace.
 
